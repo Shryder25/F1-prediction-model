@@ -39,3 +39,33 @@ jobs:
         with:
           name: model-report-demo
           path: data/demo/reports/model
+      - name: Replay a demo race with the saved models
+        run: uv run f1pred --demo replay 202601 | tail -n 5
+
+  docker:
+    # The image a recruiter would run: build it, let it build the demo on first
+    # start, then stream one replay over SSE.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t f1pred-hud .
+      - name: Start it and wait for the models
+        run: |
+          docker run -d --name hud -p 8000:8000 f1pred-hud
+          for i in $(seq 1 90); do
+            if curl -sf localhost:8000/api/health | grep -q '"models_loaded":true'; then exit 0; fi
+            sleep 10
+          done
+          docker logs hud
+          exit 1
+      - name: Stream a replay
+        run: |
+          curl -sf localhost:8000/ | grep -q EventSource
+          race=$(curl -sf localhost:8000/api/races | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['race_id'])")
+          updates=$(curl -sfN "localhost:8000/api/races/$race/stream?interval=0" | grep -c '^event: update')
+          echo "Race $race: $updates updates"
+          test "$updates" -gt 10
+      - name: Container logs
+        if: always()
+        run: docker logs hud || true

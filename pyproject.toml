@@ -36,6 +36,10 @@ model = [
     "scikit-learn>=1.5",
     "xgboost>=2.1",
 ]
+serve = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+]
 transform = [
     "dbt-core>=1.9",
     "dbt-duckdb>=1.9",
@@ -74,4 +78,6 @@ testpaths = ["tests"]
 filterwarnings = [
     # Raised inside pandas by the installed NumPy for every Timedelta; not from this code.
     "ignore:The 'generic' unit for NumPy timedelta:DeprecationWarning",
+    # Starlette's test client nudges toward a newer httpx; the app itself does not use it.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
 ]

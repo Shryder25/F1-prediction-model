@@ -3,6 +3,7 @@
 Stage 1: `ingest`, `ingest-fastf1`, `load`, `check`.
 Stage 2: `transform` (dbt build), `docs`, `findings`, `dashboard`, and `demo`.
 Stage 3: `evaluate` (train, score against baselines, write the report).
+Stage 4: `replay` (a past race in the terminal) and `serve` (the SSE service and HUD).
 Add `--demo` before any command to use the synthetic demo warehouse in data/demo.
 """
 
@@ -76,6 +77,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     evaluate.add_argument("--out", type=Path, help="Report folder (default <data>/reports/model)")
     evaluate.add_argument("--quick", action="store_true", help="Smaller search, for smoke tests")
+    replay = sub.add_parser("replay", help="Replay a past race lap by lap in the terminal")
+    replay.add_argument("race_id", type=int, help="e.g. 202405 for 2024 round 5")
+    replay.add_argument("--interval", type=float, default=0.0, help="Seconds between laps")
+    replay.add_argument("--models", type=Path, help="Model folder (default from evaluate)")
+    serve = sub.add_parser("serve", help="Serve replays (and a live race) to the HUD")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--models", type=Path, help="Model folder (default from evaluate)")
+    serve.add_argument(
+        "--openf1-session",
+        help="Also stream this OpenF1 race session: a session key, or 'latest'",
+    )
+    serve.add_argument("--total-laps", type=int, help="Scheduled laps of the OpenF1 race")
+    serve.add_argument(
+        "--race-id", type=int, help="Warehouse race id of the OpenF1 race, for pre-race features"
+    )
+    serve.add_argument(
+        "--poll", type=float, default=15.0, help="Seconds between OpenF1 polls while live"
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -125,6 +145,10 @@ def main(argv: list[str] | None = None) -> int:
         return subprocess.call([*command, "--", "--warehouse", str(settings.warehouse_path)])
     elif args.command == "evaluate":
         return _evaluate(settings, args)
+    elif args.command == "replay":
+        return _replay(settings, args)
+    elif args.command == "serve":
+        return _serve(settings, args)
     return 0
 
 
@@ -148,6 +172,60 @@ def _evaluate(settings: Settings, args: argparse.Namespace) -> int:
         return 2
     print(f"Report: {out / 'report.md'}")
     print(f"Saved models: {metrics['deployed_models']}")
+    return 0
+
+
+def _replay(settings: Settings, args: argparse.Namespace) -> int:
+    from f1pred.live.pipeline import run_race
+    from f1pred.live.predictor import Models
+    from f1pred.live.replay import WarehouseReplay
+
+    try:
+        models = Models.load(args.models or settings.model_dir)
+    except FileNotFoundError as error:
+        print(error)
+        return 2
+
+    async def run() -> None:
+        source = WarehouseReplay(settings.warehouse_path, args.race_id, args.interval)
+        async for update in run_race(source, models):
+            top = sorted(update.drivers, key=lambda d: -d.p_win)[:3]
+            leader = min(update.drivers, key=lambda d: d.position, default=None)
+            favourites = "  ".join(f"{d.code} {d.p_win:5.1%}" for d in top)
+            lap = "start" if update.lap == 0 else f"lap {update.lap:>2}/{update.total_laps}"
+            led = f"leader {leader.code}" if leader and update.lap else "grid order"
+            print(f"{lap:>9}  {update.track_status:5}  {led:11}  win: {favourites}")
+
+    try:
+        asyncio.run(run())
+    except KeyError as error:
+        print(error.args[0])
+        return 2
+    return 0
+
+
+def _serve(settings: Settings, args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from f1pred.live.openf1 import OpenF1Client, OpenF1Source
+    from f1pred.live.pipeline import RaceSource
+    from f1pred.live.server import create_app
+
+    live = None
+    if args.openf1_session:
+
+        def live() -> RaceSource:
+            return OpenF1Source(
+                OpenF1Client(),
+                session_key=args.openf1_session,
+                total_laps=args.total_laps,
+                warehouse_path=settings.warehouse_path if args.race_id else None,
+                race_id=args.race_id,
+                poll_interval_s=args.poll,
+            )
+
+    app = create_app(settings.warehouse_path, args.models or settings.model_dir, live=live)
+    uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
 

@@ -1,0 +1,19 @@
+# docker compose up        -> http://localhost:8000 (synthetic demo, built on first start)
+# F1PRED_DEMO=0 docker compose up   -> serve a real warehouse (copy it into the volume,
+#                                      or swap the volume for a bind mount of ./data)
+services:
+  hud:
+    build: .
+    image: f1pred-hud
+    ports:
+      - "8000:8000"
+    environment:
+      F1PRED_DEMO: ${F1PRED_DEMO:-1}
+      # Only needed to follow a race that is running now (OpenF1 paid access).
+      F1PRED_OPENF1_TOKEN: ${F1PRED_OPENF1_TOKEN:-}
+    volumes:
+      - f1pred-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  f1pred-data:

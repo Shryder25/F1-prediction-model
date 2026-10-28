@@ -32,3 +32,8 @@ class Settings:
     @property
     def warehouse_path(self) -> Path:
         return self.data_dir / "warehouse.duckdb"
+
+    @property
+    def model_dir(self) -> Path:
+        """Where `f1pred evaluate` saves the models that `f1pred serve` loads."""
+        return self.data_dir / "reports" / "model" / "models"

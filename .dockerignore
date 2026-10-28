@@ -1,0 +1,10 @@
+.git
+.venv
+data
+**/__pycache__
+.mypy_cache
+.pytest_cache
+.ruff_cache
+transform/target
+transform/logs
+transform/dbt_packages

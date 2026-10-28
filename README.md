@@ -2,9 +2,9 @@
 
 An F1 data platform and lap-by-lap race outcome predictor.
 
-The project ingests historical race data, models it into a DuckDB warehouse, and (in later
-stages) trains a model that updates win, podium and finishing-position probabilities every
-lap, during a replay or a live race.
+The project ingests historical race data, models it into a DuckDB warehouse, trains a model
+that updates win, podium and finishing-position probabilities every lap, and streams those
+predictions to a browser HUD during a replay or a live race.
 
 ## Status
 
@@ -13,7 +13,7 @@ lap, during a replay or a live race.
 | 1 | Ingestion pipeline: Jolpica + FastF1 ingestion, Parquet raw layer, DuckDB warehouse, Dagster orchestration, quality checks | In progress |
 | 2 | Warehouse modelling (dbt), three insight analyses and a Streamlit dashboard | In progress |
 | 3 | Pre-race and lap-by-lap prediction models, evaluated against baselines on unseen seasons | In progress |
-| 4 | Streaming replay/live pipeline and HUD | Planned |
+| 4 | Streaming replay/live pipeline, FastAPI SSE service, HUD and Docker | In progress |
 
 ## Architecture (stage 1)
 
@@ -70,6 +70,21 @@ marts.fct_* ──► marts.ml_pre_race_features   (one row per driver per race;
 A dbt test recomputes driver form independently and fails if any feature sees the race
 it predicts. Method and limitations: [`docs/model`](docs/model).
 
+## Architecture (stage 4)
+
+```
+WarehouseReplay (fct_laps)  ─┐
+OpenF1Source (live / past)  ─┴─► LapSnapshot per lap ──► LapFeatureBuilder ──► saved models
+                                                                                    │
+            HUD in the browser ◄── Server-Sent Events (FastAPI) ◄── RaceUpdate ◄────┘
+            win probability chart · running order vs predicted finish · pit window
+```
+
+Replays and live races share one code path: sources only report what a timing screen
+shows, and the features are rebuilt lap by lap. A test replays a whole season and checks
+every streamed feature against the dbt table the model was trained on. Design and limits:
+[`docs/live`](docs/live).
+
 Sources: [Jolpica F1](https://github.com/jolpica/jolpica-f1), the maintained replacement for
 the Ergast API (which shut down in 2024), and [FastF1](https://docs.fastf1.dev/) for tyre,
 stint, track status and weather data from 2018 onward.
@@ -125,6 +140,25 @@ uv run f1pred --demo transform
 uv run f1pred --demo evaluate
 ```
 
+### Replay and HUD (stage 4)
+
+```bash
+uv run f1pred replay 202405              # a past race, lap by lap, in the terminal
+uv run f1pred serve                      # HUD at http://localhost:8000
+uv run f1pred serve --openf1-session 9472 --race-id 202401   # also stream an OpenF1 session
+```
+
+`serve` loads the models saved by `f1pred evaluate`. Add `--demo` to use the demo
+warehouse. Following a race that is running now needs an OpenF1 account token in
+`F1PRED_OPENF1_TOKEN` and the race distance (`--total-laps 57`); past sessions are free.
+
+The whole demo, with nothing installed but Docker (the first start builds the synthetic
+warehouse and models, which takes a few minutes):
+
+```bash
+docker compose up                        # http://localhost:8000
+```
+
 ### Running with Dagster
 
 ```bash
@@ -148,7 +182,8 @@ uv run mypy src          # strict type checking
 uv run pre-commit install
 ```
 
-CI runs lint, type checks and tests on every push and pull request. The tests include an
+CI runs lint, type checks and tests on every push and pull request, and builds the
+Docker image and streams a replay from it. The tests include an
 end-to-end run: synthetic data with known tyre degradation and pit crew speeds goes through
 DuckDB and `dbt build`, and the tests check that the marts recover those true values. CI
 also publishes the dbt docs site (lineage graph included) as a build artifact.
