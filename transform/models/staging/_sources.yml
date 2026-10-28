@@ -1,0 +1,34 @@
+version: 2
+
+sources:
+  - name: jolpica
+    description: >
+      Raw tables loaded by `f1pred load` from the Jolpica (Ergast-compatible) API.
+      One Parquet partition per season and round, rebuilt on every load.
+    schema: main
+    tables:
+      - name: raw_races
+        description: One row per race.
+      - name: raw_results
+        description: One row per driver per race.
+      - name: raw_qualifying
+        description: One row per driver per qualifying session.
+      - name: raw_laps
+        description: One row per driver per lap.
+      - name: raw_pit_stops
+        description: One row per pit stop. Duration is pit lane time, entry to exit.
+      - name: raw_driver_standings
+        description: Championship standings after each round.
+      - name: raw_constructor_standings
+        description: Constructor standings after each round.
+      - name: raw_circuits
+        description: One row per circuit.
+
+  - name: fastf1
+    description: >
+      Lap-level timing from FastF1 (2018 onward): tyre compound, stint, tyre age and
+      track status. Optional: models read it only when the table exists.
+    schema: main
+    tables:
+      - name: raw_fastf1_laps
+        description: One row per driver per lap, keyed by car number.

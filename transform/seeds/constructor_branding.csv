@@ -1,0 +1,19 @@
+constructor_id,constructor_name,team_colour
+alfa,Alfa Romeo,#900000
+alphatauri,AlphaTauri,#2B4562
+alpine,Alpine,#0093CC
+aston_martin,Aston Martin,#229971
+audi,Audi,#BB0A30
+cadillac,Cadillac,#1E1E1E
+ferrari,Ferrari,#E8002D
+force_india,Force India,#F596C8
+haas,Haas,#B6BABD
+mclaren,McLaren,#FF8000
+mercedes,Mercedes,#27F4D2
+racing_point,Racing Point,#F596C8
+rb,RB,#6692FF
+red_bull,Red Bull,#3671C6
+renault,Renault,#FFF500
+sauber,Sauber,#52E252
+toro_rosso,Toro Rosso,#469BFF
+williams,Williams,#64C4FF

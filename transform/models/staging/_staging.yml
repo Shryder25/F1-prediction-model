@@ -1,0 +1,106 @@
+version: 2
+
+models:
+  - name: stg_jolpica__races
+    description: One row per race, with an integer race_id (season * 100 + round).
+    columns:
+      - name: race_id
+        data_tests: [unique, not_null]
+      - name: circuit_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_jolpica__circuits')
+                field: circuit_id
+
+  - name: stg_jolpica__circuits
+    columns:
+      - name: circuit_id
+        data_tests: [unique, not_null]
+
+  - name: stg_jolpica__results
+    description: One row per driver per race.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, driver_id]
+    columns:
+      - name: race_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_jolpica__races')
+                field: race_id
+      - name: grid
+        description: Starting slot. 0 means the car started from the pit lane.
+        data_tests:
+          - not_null
+          - between:
+              arguments: {min_value: 0, max_value: 30}
+      - name: classified_position
+        description: Official finishing position; null for retirements and disqualifications.
+        data_tests:
+          - between:
+              arguments: {min_value: 1, max_value: 30}
+
+  - name: stg_jolpica__qualifying
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, driver_id]
+
+  - name: stg_jolpica__laps
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, driver_id, lap]
+    columns:
+      - name: lap_time_s
+        data_tests:
+          - between:
+              arguments: {min_value: 30, max_value: 7200}
+
+  - name: stg_jolpica__pit_stops
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, driver_id, stop_number]
+    columns:
+      - name: pit_lane_time_s
+        data_tests:
+          - not_null
+          - between:
+              arguments: {min_value: 0, max_value: 7200}
+
+  - name: stg_jolpica__driver_standings
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, driver_id]
+
+  - name: stg_jolpica__constructor_standings
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, constructor_id]
+
+  - name: stg_fastf1__laps
+    description: >
+      FastF1 laps with tyre data. Empty until the FastF1 pipeline has loaded
+      raw_fastf1_laps. Unknown compounds are mapped to null.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, car_number, lap]
+    columns:
+      - name: compound
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [SOFT, MEDIUM, HARD, INTERMEDIATE, WET]
+      - name: tyre_age_laps
+        data_tests:
+          - between:
+              arguments: {min_value: 0, max_value: 100}

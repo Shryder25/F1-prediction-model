@@ -19,3 +19,13 @@ jobs:
         run: uv run mypy src
       - name: Test
         run: uv run pytest -q
+      - name: dbt docs on the demo warehouse
+        run: uv run f1pred demo && uv run f1pred --demo transform && uv run f1pred --demo docs
+      - name: Upload dbt docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-docs
+          path: |
+            transform/target/index.html
+            transform/target/manifest.json
+            transform/target/catalog.json

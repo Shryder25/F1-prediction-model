@@ -1,0 +1,93 @@
+version: 2
+
+models:
+  - name: int_race_entries
+    description: >
+      One row per driver per race start. Pit lane starters are slotted behind the
+      last grid car so every starter has a grid_position.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, driver_id]
+    columns:
+      - name: grid_position
+        data_tests: [not_null]
+      - name: positions_gained
+        description: grid_position minus classified_position. Null for non-classified finishes.
+
+  - name: int_laps_with_tyres
+    description: Jolpica laps joined to FastF1 tyre data on race, car number and lap.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, driver_id, lap]
+
+  - name: int_stint_laps
+    description: Clean, fuel-corrected green-flag laps used to fit tyre degradation.
+
+  - name: int_stints
+    description: One row per driver stint with a fitted degradation slope.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, driver_id, stint]
+
+  - name: int_pit_stops
+    description: Pit stops with team, circuit, outlier flag and delta to the race median.
+
+unit_tests:
+  - name: pit_lane_starters_go_to_the_back
+    description: A car starting from the pit lane is slotted behind the last grid car.
+    model: int_race_entries
+    given:
+      - input: ref('stg_jolpica__results')
+        rows:
+          - {race_id: 202401, season: 2024, round: 1, driver_id: a, grid: 1, finishing_order: 1, position_text: "1", is_classified: true, classified_position: 1, points: 25, status: Finished}
+          - {race_id: 202401, season: 2024, round: 1, driver_id: b, grid: 2, finishing_order: 3, position_text: "R", is_classified: false, classified_position: null, points: 0, status: Engine}
+          - {race_id: 202401, season: 2024, round: 1, driver_id: c, grid: 0, finishing_order: 2, position_text: "2", is_classified: true, classified_position: 2, points: 18, status: Finished}
+          - {race_id: 202401, season: 2024, round: 1, driver_id: d, grid: 0, finishing_order: 4, position_text: "W", is_classified: false, classified_position: null, points: 0, status: Withdrew}
+      - input: ref('stg_jolpica__qualifying')
+        rows: []
+    expect:
+      rows:
+        - {driver_id: a, grid_position: 1, started_from_pit_lane: false, positions_gained: 0, is_win: true, is_podium: true}
+        - {driver_id: b, grid_position: 2, started_from_pit_lane: false, positions_gained: null, is_win: false, is_podium: false}
+        - {driver_id: c, grid_position: 3, started_from_pit_lane: true, positions_gained: 1, is_win: false, is_podium: true}
+
+  - name: stint_slope_is_seconds_per_lap_of_tyre_age
+    description: Lap times rising 0.1 s per lap of tyre age give a slope of 0.1.
+    model: int_stints
+    overrides:
+      vars:
+        min_stint_laps: 3
+    given:
+      - input: ref('int_stint_laps')
+        rows:
+          - {race_id: 202401, season: 2024, round: 1, driver_id: a, stint: 1, compound: SOFT, tyre_age_laps: 2, fuel_corrected_lap_time_s: 90.0}
+          - {race_id: 202401, season: 2024, round: 1, driver_id: a, stint: 1, compound: SOFT, tyre_age_laps: 3, fuel_corrected_lap_time_s: 90.1}
+          - {race_id: 202401, season: 2024, round: 1, driver_id: a, stint: 1, compound: SOFT, tyre_age_laps: 4, fuel_corrected_lap_time_s: 90.2}
+          - {race_id: 202401, season: 2024, round: 1, driver_id: a, stint: 1, compound: SOFT, tyre_age_laps: 5, fuel_corrected_lap_time_s: 90.3}
+    expect:
+      rows:
+        - {driver_id: a, stint: 1, clean_laps: 4, degradation_s_per_lap: 0.1, is_usable: true}
+
+  - name: fuel_correction_removes_fuel_burn
+    description: >
+      A car lapping 0.05 s faster each lap purely from fuel burn shows a flat
+      fuel-corrected lap time.
+    model: int_stint_laps
+    overrides:
+      vars:
+        fuel_correction_s_per_lap: 0.05
+    given:
+      - input: ref('int_laps_with_tyres')
+        rows:
+          - {race_id: 202401, season: 2024, round: 1, driver_id: a, stint: 1, compound: SOFT, lap: 2, total_laps: 4, tyre_age_laps: 1, lap_time_s: 90.10, has_tyre_data: true, is_slick: true, is_pit_in_lap: false, is_pit_out_lap: false, is_safety_car: false, is_virtual_safety_car: false, is_red_flag: false, is_accurate: true}
+          - {race_id: 202401, season: 2024, round: 1, driver_id: a, stint: 1, compound: SOFT, lap: 3, total_laps: 4, tyre_age_laps: 2, lap_time_s: 90.05, has_tyre_data: true, is_slick: true, is_pit_in_lap: false, is_pit_out_lap: false, is_safety_car: false, is_virtual_safety_car: false, is_red_flag: false, is_accurate: true}
+          - {race_id: 202401, season: 2024, round: 1, driver_id: a, stint: 1, compound: SOFT, lap: 4, total_laps: 4, tyre_age_laps: 3, lap_time_s: 90.00, has_tyre_data: true, is_slick: true, is_pit_in_lap: false, is_pit_out_lap: false, is_safety_car: false, is_virtual_safety_car: false, is_red_flag: false, is_accurate: true}
+          - {race_id: 202401, season: 2024, round: 1, driver_id: a, stint: 1, compound: SOFT, lap: 4, total_laps: 4, tyre_age_laps: 3, lap_time_s: 95.00, has_tyre_data: true, is_slick: true, is_pit_in_lap: false, is_pit_out_lap: false, is_safety_car: true, is_virtual_safety_car: false, is_red_flag: false, is_accurate: true}
+    expect:
+      rows:
+        - {lap: 2, fuel_corrected_lap_time_s: 90.0}
+        - {lap: 3, fuel_corrected_lap_time_s: 90.0}
+        - {lap: 4, fuel_corrected_lap_time_s: 90.0}

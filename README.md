@@ -11,7 +11,7 @@ lap, during a replay or a live race.
 | Stage | What | Status |
 | --- | --- | --- |
 | 1 | Ingestion pipeline: Jolpica + FastF1 ingestion, Parquet raw layer, DuckDB warehouse, Dagster orchestration, quality checks | In progress |
-| 2 | Warehouse modelling (dbt) and insight dashboards | Planned |
+| 2 | Warehouse modelling (dbt), three insight analyses and a Streamlit dashboard | In progress |
 | 3 | Prediction model and evaluation | Planned |
 | 4 | Streaming replay/live pipeline and HUD | Planned |
 
@@ -31,6 +31,25 @@ FastF1 ──► per-lap tyres, stints, track status, weather  │
 Orchestrated by Dagster: season-partitioned assets, asset checks, weekly refresh schedule.
 ```
 
+## Architecture (stage 2)
+
+```
+raw_* tables ──► dbt staging (views: typed, renamed, one model per source table)
+                     │
+                     ▼
+             dbt intermediate (race entries, laps + tyres, clean stint laps, stints, pit stops)
+                     │
+                     ▼
+   marts.dim_*  / marts.fct_*   ──►  marts.mart_* insight tables  ──►  Streamlit dashboard
+   (race, circuit, driver,           (grid conversion, overtaking,     `f1pred findings`
+    constructor; results, quali,      race craft, pit stops, tyre
+    laps, pit stops)                  degradation)
+```
+
+56 dbt data tests (keys, relationships, ranges, accepted values) and 3 dbt unit tests run
+on every build. FastF1 data is optional: without it the tyre models build empty instead
+of failing.
+
 Sources: [Jolpica F1](https://github.com/jolpica/jolpica-f1), the maintained replacement for
 the Ergast API (which shut down in 2024), and [FastF1](https://docs.fastf1.dev/) for tyre,
 stint, track status and weather data from 2018 onward.
@@ -46,6 +65,26 @@ uv run f1pred load                       # build data/warehouse.duckdb
 uv run f1pred check                      # run data quality checks
 uv run f1pred ingest-fastf1 --seasons 2024   # add tyre, stint and weather data
 ```
+
+### Modelling and insights (stage 2)
+
+```bash
+uv run f1pred transform      # dbt build: seeds, models and tests
+uv run f1pred findings       # one headline finding per analysis
+uv run f1pred dashboard      # Streamlit dashboard at http://localhost:8501
+uv run f1pred docs           # dbt docs; view with `cd transform && uv run dbt docs serve`
+```
+
+No API access? Build a synthetic demo warehouse and run everything against it. The
+dashboard shows a banner when it is reading demo data.
+
+```bash
+uv run f1pred demo
+uv run f1pred --demo transform
+uv run f1pred --demo dashboard
+```
+
+The write-ups for each analysis are in [`docs/insights`](docs/insights).
 
 ### Running with Dagster
 
@@ -70,7 +109,10 @@ uv run mypy src          # strict type checking
 uv run pre-commit install
 ```
 
-CI runs lint, type checks and tests on every push and pull request.
+CI runs lint, type checks and tests on every push and pull request. The tests include an
+end-to-end run: synthetic data with known tyre degradation and pit crew speeds goes through
+DuckDB and `dbt build`, and the tests check that the marts recover those true values. CI
+also publishes the dbt docs site (lineage graph included) as a build artifact.
 
 ## Tables
 
@@ -87,3 +129,23 @@ CI runs lint, type checks and tests on every push and pull request.
 | `raw_fastf1_laps` | one row per driver per lap: compound, tyre life, stint, pit in/out, track status |
 | `raw_fastf1_weather` | one row per weather sample (about every minute) |
 | `dim_driver` | one row per driver, mapping Ergast IDs to codes and car numbers |
+
+### dbt models (stage 2)
+
+Built into the `staging`, `intermediate` and `marts` schemas of the same warehouse.
+
+| Model | Grain |
+| --- | --- |
+| `dim_race` | one row per race, with circuit and race length |
+| `dim_circuit` | one row per circuit |
+| `dim_driver` | one row per driver, Ergast id to code and car number |
+| `dim_constructor` | one row per team, with display name and colour |
+| `fct_race_results` | one row per driver per race start, with grid slot and places gained |
+| `fct_qualifying` | one row per driver per qualifying, with % gap to pole and team mate |
+| `fct_laps` | one row per driver per lap, with gap to leader and tyre data |
+| `fct_pit_stops` | one row per pit stop, with delta to the race's median stop |
+| `mart_grid_conversion` | season x grid slot: wins, podiums, points |
+| `mart_circuit_overtaking` | season x circuit: how closely the finish follows the grid |
+| `mart_driver_race_craft` | season x driver: places gained versus grid expectation |
+| `mart_pit_stop_team_performance` | season x team: pit stop speed and consistency |
+| `mart_tyre_degradation` | season x circuit x compound: fuel-corrected degradation |

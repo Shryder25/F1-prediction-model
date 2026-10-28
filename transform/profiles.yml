@@ -1,0 +1,8 @@
+# The warehouse path comes from F1PRED_WAREHOUSE, which `f1pred transform` sets for you.
+f1pred:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('F1PRED_WAREHOUSE', '../data/warehouse.duckdb') }}"
+      threads: 4

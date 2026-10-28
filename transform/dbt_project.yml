@@ -1,0 +1,36 @@
+name: f1pred
+version: "0.2.0"
+config-version: 2
+profile: f1pred
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+target-path: target
+clean-targets: [target, dbt_packages, logs]
+
+vars:
+  # Lap time lost per lap of fuel still on board. Roughly 0.03 s per kg at about
+  # 1.7 kg burned per lap. An assumption, kept here so it is easy to tune.
+  fuel_correction_s_per_lap: 0.05
+  # A stint needs at least this many clean laps before we fit a degradation slope.
+  min_stint_laps: 5
+  # Pit lane times above this are red flags, penalties or garage stops, not normal stops.
+  pit_stop_outlier_s: 60
+
+models:
+  f1pred:
+    staging:
+      +schema: staging
+      +materialized: view
+    intermediate:
+      +schema: intermediate
+      +materialized: view
+    marts:
+      +schema: marts
+      +materialized: table
+
+seeds:
+  f1pred:
+    +schema: reference
