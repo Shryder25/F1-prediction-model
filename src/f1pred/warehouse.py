@@ -19,6 +19,8 @@ PARTITIONED_TABLES = (
     "laps",
     "driver_standings",
     "constructor_standings",
+    "fastf1_laps",
+    "fastf1_weather",
 )
 
 
@@ -108,6 +110,29 @@ CHECKS = (
         "pit stops: every driver appears in that race's results",
         ("raw_pit_stops", "raw_results"),
         "SELECT p.* FROM raw_pit_stops p ANTI JOIN raw_results r USING (season, round, driver_id)",
+    ),
+    Check(
+        "fastf1 laps: one row per driver per lap",
+        ("raw_fastf1_laps",),
+        "SELECT season, round, driver_code, lap FROM raw_fastf1_laps "
+        "GROUP BY ALL HAVING count(*) > 1",
+    ),
+    Check(
+        "fastf1 laps: compounds are known Pirelli compounds",
+        ("raw_fastf1_laps",),
+        "SELECT * FROM raw_fastf1_laps WHERE compound NOT IN ("
+        "'HYPERSOFT', 'ULTRASOFT', 'SUPERSOFT', 'SOFT', 'MEDIUM', 'HARD', 'SUPERHARD', "
+        "'INTERMEDIATE', 'WET', 'UNKNOWN', 'TEST_UNKNOWN')",
+    ),
+    Check(
+        "fastf1 laps: tyre life is at least 1 lap",
+        ("raw_fastf1_laps",),
+        "SELECT * FROM raw_fastf1_laps WHERE tyre_life < 1",
+    ),
+    Check(
+        "fastf1 laps: every driver code maps to dim_driver",
+        ("raw_fastf1_laps", "dim_driver"),
+        "SELECT DISTINCT driver_code FROM raw_fastf1_laps ANTI JOIN dim_driver USING (driver_code)",
     ),
     Check(
         "dim_driver: every driver has a code",

@@ -1,4 +1,4 @@
-"""Command line entry point: `f1pred ingest`, `f1pred load`, `f1pred check`."""
+"""Command line entry point: `f1pred ingest`, `ingest-fastf1`, `load`, `check`."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import sys
 
 from f1pred import warehouse
 from f1pred.config import Settings
+from f1pred.ingest.fastf1_source import FastF1Loader, ingest_fastf1_season
 from f1pred.ingest.pipeline import ingest_circuits, ingest_season
 from f1pred.jolpica.client import JolpicaClient
 
@@ -35,6 +36,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     ingest = sub.add_parser("ingest", help="Fetch seasons from Jolpica into Parquet")
     ingest.add_argument("--seasons", default="2018-2025", type=parse_seasons)
+    fastf1 = sub.add_parser("ingest-fastf1", help="Fetch FastF1 tyre and weather data")
+    fastf1.add_argument("--seasons", default="2018-2025", type=parse_seasons)
     sub.add_parser("load", help="Rebuild the DuckDB warehouse from Parquet")
     sub.add_parser("check", help="Run data quality checks on the warehouse")
     args = parser.parse_args(argv)
@@ -44,6 +47,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "ingest":
         asyncio.run(_ingest(settings, args.seasons))
+    elif args.command == "ingest-fastf1":
+        loader = FastF1Loader(settings.data_dir / "fastf1_cache")
+        for season in args.seasons:
+            rows = ingest_fastf1_season(loader, settings.raw_dir, season)
+            logging.info("FastF1 season %s done: %d rows", season, rows)
     elif args.command == "load":
         for table, count in warehouse.load(settings.raw_dir, settings.warehouse_path).items():
             print(f"{table:24} {count:>10,} rows")

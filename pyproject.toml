@@ -10,6 +10,8 @@ dependencies = [
     "pandas>=2.2",
     "pyarrow>=16",
     "duckdb>=1.0",
+    "fastf1>=3.9.0",
+    "dagster>=1.13.27",
 ]
 
 [project.scripts]
@@ -24,6 +26,7 @@ dev = [
     "mypy>=1.10",
     "pandas-stubs",
     "pre-commit>=3.7",
+    "dagster-webserver>=1.13.27",
 ]
 
 [build-system]
@@ -32,6 +35,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/f1pred"]
+
+[tool.dagster]
+module_name = "f1pred.orchestration.definitions"
 
 [tool.ruff]
 line-length = 100
@@ -53,3 +59,7 @@ ignore_missing_imports = true
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+filterwarnings = [
+    # Raised inside pandas by the installed NumPy for every Timedelta; not from this code.
+    "ignore:The 'generic' unit for NumPy timedelta:DeprecationWarning",
+]
