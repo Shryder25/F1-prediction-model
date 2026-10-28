@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from f1pred import cli, demo, transform
+from f1pred import cli
 from f1pred.model.dataset import (
     LABELS,
     LAP_FEATURES,
@@ -23,9 +23,7 @@ from f1pred.model.dataset import (
 from f1pred.model.estimators import PRE_RACE_GROUPS, GridBaseline, finalize
 from f1pred.model.metrics import brier, calibration_table, paired_bootstrap, position_mae
 from f1pred.model.report import build_report
-
-DEMO_SEASONS = range(2020, 2026)
-
+from tests.conftest import MODEL_DEMO_SEASONS as DEMO_SEASONS
 
 # --- Unit tests --------------------------------------------------------------------
 
@@ -124,12 +122,8 @@ def test_paired_bootstrap_of_identical_predictions_is_zero() -> None:
 
 
 @pytest.fixture(scope="module")
-def warehouse_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    data_dir = tmp_path_factory.mktemp("model_demo")
-    demo.build(data_dir, seasons=DEMO_SEASONS)
-    path = data_dir / "warehouse.duckdb"
-    assert transform.run_dbt(path, ["build"]), "dbt build failed: see the log above"
-    return path
+def warehouse_path(demo_model_warehouse: Path) -> Path:
+    return demo_model_warehouse
 
 
 def test_feature_tables_cover_every_start_and_lap(warehouse_path: Path) -> None:

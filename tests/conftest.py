@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from f1pred.config import Settings
+
+# Enough seasons for a train / validation / test split, and a holdout.
+MODEL_DEMO_SEASONS = range(2020, 2026)
 
 DRIVERS = [
     ("max_verstappen", "VER", 1, "Max", "Verstappen", "red_bull"),
@@ -148,3 +152,15 @@ def standings(kind: str) -> dict[str, Any]:
 @pytest.fixture
 def settings(tmp_path: Any) -> Settings:
     return Settings(jolpica_base_url="https://api.test/ergast/f1", data_dir=tmp_path)
+
+
+@pytest.fixture(scope="session")
+def demo_model_warehouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A demo warehouse with dbt built, shared by the model and live tests. Read only."""
+    from f1pred import demo, transform
+
+    data_dir = tmp_path_factory.mktemp("model_demo")
+    demo.build(data_dir, seasons=MODEL_DEMO_SEASONS)
+    path = data_dir / "warehouse.duckdb"
+    assert transform.run_dbt(path, ["build"]), "dbt build failed: see the log above"
+    return path

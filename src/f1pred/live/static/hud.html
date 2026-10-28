@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Race Predictor HUD</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #0b0b0b; --ink-2: #52514e; --muted: #8c8b86;
+    --grid: #e4e3df; --line: #d6d5d0; --accent: #e10600; --sc: rgba(245, 190, 0, 0.18);
+    --red: rgba(225, 6, 0, 0.14); --good: #1f8a4c; --warn: #b77900; --bad: #c4291c;
+    --chip: #f0efeb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1013; --panel: #17181c; --ink: #f2f1ee; --ink-2: #b9b8b3; --muted: #7d7c78;
+      --grid: #26272c; --line: #33343a; --sc: rgba(245, 190, 0, 0.14); --red: rgba(225, 6, 0, 0.2);
+      --good: #4cc27f; --warn: #f2b33d; --bad: #ff6b5e; --chip: #22232a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1013; --panel: #17181c; --ink: #f2f1ee; --ink-2: #b9b8b3; --muted: #7d7c78;
+    --grid: #26272c; --line: #33343a; --sc: rgba(245, 190, 0, 0.14); --red: rgba(225, 6, 0, 0.2);
+    --good: #4cc27f; --warn: #f2b33d; --bad: #ff6b5e; --chip: #22232a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
+    padding: 14px 16px; border-bottom: 3px solid var(--accent); background: var(--panel);
+  }
+  h1 { font-size: 16px; margin: 0; letter-spacing: 0.02em; }
+  h2 { font-size: 13px; margin: 0 0 10px; color: var(--ink-2); font-weight: 600;
+       text-transform: uppercase; letter-spacing: 0.06em; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  select, button {
+    font: inherit; color: var(--ink); background: var(--chip); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 8px; max-width: 100%;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--ink-2); }
+  .status { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+  .lap { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 18px; }
+  .lap small { color: var(--muted); font-weight: 400; font-size: 13px; }
+  .pill { border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 700;
+          border: 1px solid currentColor; }
+  .pill.GREEN { color: var(--good); } .pill.SC, .pill.VSC { color: var(--warn); }
+  .pill.RED { color: var(--bad); } .pill.START { color: var(--ink-2); }
+  .banner { padding: 6px 16px; background: var(--chip); color: var(--ink-2); font-size: 13px; }
+  .banner[hidden] { display: none; }
+  main {
+    display: grid; gap: 16px; padding: 16px; max-width: 1280px; margin: 0 auto;
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+            padding: 14px; min-width: 0; }
+  .chart-wrap { position: relative; }
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12px;
+            color: var(--ink-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .tooltip {
+    position: absolute; pointer-events: none; background: var(--panel); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.12); white-space: nowrap; display: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .tooltip b { display: block; margin-bottom: 2px; }
+  .tooltip i { display: inline-block; width: 10px; height: 3px; margin-right: 6px;
+               vertical-align: middle; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th { text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;
+       text-transform: uppercase; letter-spacing: 0.04em; padding: 4px 6px;
+       border-bottom: 1px solid var(--line); }
+  td { padding: 5px 6px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  td.num, th.num { text-align: right; }
+  .team { display: inline-block; width: 4px; height: 14px; border-radius: 2px;
+          vertical-align: -2px; margin-right: 6px; }
+  .tyre { display: inline-flex; align-items: center; justify-content: center; width: 18px;
+          height: 18px; border-radius: 50%; border: 2.5px solid; font-size: 10px;
+          font-weight: 800; margin-right: 4px; }
+  .delta-up { color: var(--good); } .delta-down { color: var(--bad); }
+  .muted { color: var(--muted); }
+  .bar { display: inline-block; height: 6px; border-radius: 3px; background: var(--ink-2);
+         vertical-align: middle; margin-left: 6px; opacity: 0.55; }
+  .pit-row td:last-child { white-space: normal; }
+  .free { color: var(--good); font-weight: 600; } .cost { color: var(--bad); font-weight: 600; }
+  .wide { grid-column: 1 / -1; }
+  .note { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+  .empty { color: var(--muted); padding: 30px 0; text-align: center; }
+  .scroll { overflow-x: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>F1 race predictor</h1>
+  <div class="controls">
+    <label for="race" class="muted">Race</label>
+    <select id="race" aria-label="Race to replay"></select>
+    <select id="speed" aria-label="Replay speed">
+      <option value="0.25">Fast (4 laps/s)</option>
+      <option value="1" selected>Normal (1 lap/s)</option>
+      <option value="3">Slow (1 lap / 3 s)</option>
+    </select>
+    <button id="play" type="button">Replay</button>
+    <button id="live" type="button" hidden>Live race</button>
+  </div>
+  <div class="status">
+    <span id="track" class="pill START">PRE-RACE</span>
+    <span class="lap" id="lap">–</span>
+  </div>
+</header>
+<div class="banner" id="banner" hidden></div>
+<main>
+  <section>
+    <h2>Win probability by lap</h2>
+    <div class="chart-wrap" id="chart-wrap">
+      <svg id="chart" viewBox="0 0 720 320" role="img"
+           aria-label="Win probability of the leading contenders on each lap"></svg>
+      <div class="tooltip" id="tooltip"></div>
+    </div>
+    <div class="legend" id="legend"></div>
+    <p class="note">Shaded laps: safety car or virtual safety car (yellow), red flag (red).
+      Lap 0 is the pre-race model; every later point is the lap model.</p>
+  </section>
+  <section>
+    <h2>Running order vs predicted finish</h2>
+    <div class="scroll">
+      <table aria-label="Running order and predictions">
+        <thead><tr>
+          <th>Pos</th><th>Driver</th><th class="num">Gap</th><th>Tyre</th>
+          <th class="num">Pred</th><th class="num">Win</th><th class="num">Podium</th>
+        </tr></thead>
+        <tbody id="order"><tr><td colspan="7" class="empty">Pick a race and press Replay.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+  <section class="wide">
+    <h2>Pit window: if this car pitted at the end of this lap</h2>
+    <div class="scroll">
+      <table aria-label="Pit window">
+        <thead><tr>
+          <th>Pos</th><th>Driver</th><th>Tyre</th><th class="num">Stops</th>
+          <th class="num">Rejoins</th><th>Verdict</th>
+        </tr></thead>
+        <tbody id="pit"></tbody>
+      </table>
+    </div>
+    <p class="note" id="pit-note">Rejoin position assumes the cars behind keep their gaps and the
+      stop costs the circuit's typical pit lane time (less under a safety car). It ignores traffic
+      and fresh-tyre pace.</p>
+  </section>
+</main>
+<script>
+"use strict";
+const COMPOUND = {
+  SOFT: ["S", "#e10600"], MEDIUM: ["M", "#f5be00"], HARD: ["H", "#9a9a9a"],
+  INTERMEDIATE: ["I", "#2fa84f"], WET: ["W", "#1e6fd9"],
+};
+const SERIES = 6;  // lines drawn: the drivers with the highest win chance so far
+const $ = (id) => document.getElementById(id);
+let source = null;
+let history = [];   // RaceUpdate by lap
+let total = 0;
+
+function el(tag, attrs = {}, text) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+function svg(tag, attrs = {}) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  return node;
+}
+const pct = (p) => (p >= 0.995 ? ">99%" : p < 0.005 ? "<1%" : `${Math.round(p * 100)}%`);
+const safeColour = (c) => (/^#[0-9a-fA-F]{6}$/.test(c) ? c : "#888888");
+
+async function init() {
+  const [races, health] = await Promise.all([
+    fetch("/api/races").then((r) => r.json()),
+    fetch("/api/health").then((r) => r.json()),
+  ]);
+  const select = $("race");
+  for (const race of races) {
+    select.append(el("option", { value: race.race_id },
+      `${race.season} R${race.round} · ${race.race_name}`));
+  }
+  if (!races.length) select.append(el("option", { value: "" }, "No races in the warehouse"));
+  if (!health.models_loaded) showBanner(health.model_error || "Models are not loaded.");
+  else if (health.demo_data) showBanner("Synthetic demo data: made-up races that show the pipeline works.");
+  if (health.live) $("live").hidden = false;
+  $("play").onclick = () => start(`/api/races/${select.value}/stream?interval=${$("speed").value}`);
+  $("live").onclick = () => start("/api/live/stream");
+  const params = new URLSearchParams(location.search);
+  if (params.get("race")) select.value = params.get("race");
+  if (params.has("autoplay") || params.has("race")) $("play").click();
+}
+
+function showBanner(text) { $("banner").textContent = text; $("banner").hidden = false; }
+
+function start(url) {
+  if (source) source.close();
+  history = [];
+  render();
+  source = new EventSource(url);
+  source.addEventListener("update", (event) => {
+    const update = JSON.parse(event.data);
+    history[update.lap] = update;
+    total = update.total_laps;
+    render();
+  });
+  // The server sends "end" when the race is over; without close() the browser reconnects.
+  source.addEventListener("end", () => source.close());
+  source.onerror = () => { if (source.readyState === EventSource.CLOSED) showBanner("Stream closed."); };
+}
+
+function latest() {
+  for (let i = history.length - 1; i >= 0; i--) if (history[i]) return history[i];
+  return null;
+}
+
+function render() {
+  const now = latest();
+  $("lap").replaceChildren();
+  if (!now) {
+    $("lap").textContent = "–";
+    $("track").className = "pill START"; $("track").textContent = "PRE-RACE";
+    drawChart(); return;
+  }
+  if (now.lap === 0) $("lap").textContent = "Grid";
+  else {
+    $("lap").append(`Lap ${now.lap}`, el("small", {}, ` / ${now.total_laps}${now.is_final ? " · final" : ""}`));
+  }
+  const status = now.lap === 0 ? "START" : now.track_status;
+  $("track").className = `pill ${status}`;
+  $("track").textContent = { START: "PRE-RACE", GREEN: "GREEN", SC: "SAFETY CAR", VSC: "VSC", RED: "RED FLAG" }[status];
+  drawOrder(now);
+  drawPit(now);
+  drawChart();
+}
+
+function tyre(compound, age) {
+  const cell = el("td");
+  if (!compound) { cell.append(el("span", { class: "muted" }, "–")); return cell; }
+  const [letter, colour] = COMPOUND[compound] || [compound[0], "#888888"];
+  const badge = el("span", { class: "tyre", style: `border-color:${colour}`, title: compound }, letter);
+  cell.append(badge, age == null ? "" : `${age}`);
+  return cell;
+}
+
+function driverCell(d) {
+  const cell = el("td");
+  cell.append(el("span", { class: "team", style: `background:${safeColour(d.team_colour)}` }), d.code);
+  return cell;
+}
+
+function drawOrder(now) {
+  const body = $("order");
+  body.replaceChildren();
+  const maxWin = Math.max(...now.drivers.map((d) => d.p_win), 0.01);
+  for (const d of now.drivers) {
+    const row = el("tr");
+    row.append(el("td", {}, now.lap === 0 ? d.grid_position : d.position), driverCell(d));
+    const gap = now.lap === 0 ? "" : d.position === 1 ? "Leader"
+      : d.gap_to_leader_s == null ? "–" : `+${d.gap_to_leader_s.toFixed(1)}`;
+    row.append(el("td", { class: "num" }, gap));
+    row.append(tyre(d.compound, d.tyre_age_laps));
+    const pred = el("td", { class: "num" }, `P${d.predicted_position}`);
+    const delta = d.position - d.predicted_position;
+    if (now.lap > 0 && delta !== 0) {
+      pred.append(el("span", { class: delta > 0 ? "delta-up" : "delta-down",
+        title: delta > 0 ? "Predicted to gain places" : "Predicted to lose places" },
+        ` ${delta > 0 ? "▲" : "▼"}${Math.abs(delta)}`));
+    }
+    row.append(pred);
+    const win = el("td", { class: "num" }, pct(d.p_win));
+    win.append(el("span", { class: "bar", style: `width:${Math.round((d.p_win / maxWin) * 40)}px` }));
+    row.append(win, el("td", { class: "num" }, pct(d.p_podium)));
+    body.append(row);
+  }
+}
+
+function drawPit(now) {
+  const body = $("pit");
+  body.replaceChildren();
+  if (now.lap === 0) {
+    const row = el("tr");
+    row.append(el("td", { colspan: 6, class: "empty" }, "Pit windows appear once the race starts."));
+    body.append(row);
+    return;
+  }
+  for (const d of now.drivers) {
+    if (!d.pit) continue;
+    const row = el("tr", { class: "pit-row" });
+    row.append(el("td", {}, d.position), driverCell(d), tyre(d.compound, d.tyre_age_laps),
+      el("td", { class: "num" }, d.pit_stops), el("td", { class: "num" }, `P${d.pit.rejoin_position}`));
+    const verdict = el("td");
+    if (d.pit.places_lost === 0) {
+      verdict.append(el("span", { class: "free" }, "No places lost"),
+        d.pit.margin_s == null ? "" : `, ${d.pit.margin_s.toFixed(1)} s to spare`);
+    } else {
+      verdict.append(el("span", { class: "cost" }, `Loses ${d.pit.places_lost} place${d.pit.places_lost > 1 ? "s" : ""}`));
+      if (d.pit.places_lost === 1 && d.pit.margin_s != null) {
+        verdict.append(`, ${(-d.pit.margin_s).toFixed(1)} s short of a free stop`);
+      }
+    }
+    row.append(verdict);
+    body.append(row);
+  }
+}
+
+// --- Chart -------------------------------------------------------------------
+const M = { top: 12, right: 52, bottom: 30, left: 40 };
+let W = 720, H = 320;
+
+function drawChart() {
+  const chart = $("chart");
+  // Size the drawing to its box so text stays readable on a phone.
+  W = Math.max(320, Math.min(900, $("chart-wrap").clientWidth || 720));
+  H = W < 560 ? 260 : 320;
+  chart.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  chart.replaceChildren();
+  $("legend").replaceChildren();
+  const laps = history.filter(Boolean);
+  if (!laps.length) {
+    const t = svg("text", { x: W / 2, y: H / 2, "text-anchor": "middle", fill: "var(--muted)" });
+    t.textContent = "Waiting for the race to start";
+    chart.append(t);
+    return;
+  }
+  const maxLap = Math.max(total, 1);
+  const x = (lap) => M.left + (lap / maxLap) * (W - M.left - M.right);
+  const y = (p) => M.top + (1 - p) * (H - M.top - M.bottom);
+
+  // Neutralised laps first, behind everything.
+  for (const u of laps) {
+    if (u.lap === 0 || u.track_status === "GREEN") continue;
+    chart.append(svg("rect", { x: x(u.lap - 1), y: M.top, width: x(u.lap) - x(u.lap - 1),
+      height: H - M.top - M.bottom, fill: u.track_status === "RED" ? "var(--red)" : "var(--sc)" }));
+  }
+  for (const p of [0, 0.25, 0.5, 0.75, 1]) {
+    chart.append(svg("line", { x1: M.left, x2: W - M.right, y1: y(p), y2: y(p),
+      stroke: "var(--grid)", "stroke-width": 1 }));
+    const label = svg("text", { x: M.left - 6, y: y(p) + 4, "text-anchor": "end",
+      fill: "var(--muted)", "font-size": 11 });
+    label.textContent = `${p * 100}%`;
+    chart.append(label);
+  }
+  const step = maxLap > 40 ? (W < 560 ? 20 : 10) : 5;
+  for (let lap = 0; lap <= maxLap; lap += step) {
+    const label = svg("text", { x: x(lap), y: H - 10, "text-anchor": "middle",
+      fill: "var(--muted)", "font-size": 11 });
+    label.textContent = lap === 0 ? "Grid" : lap;
+    chart.append(label);
+  }
+  chart.append(svg("line", { x1: M.left, x2: W - M.right, y1: y(0), y2: y(0),
+    stroke: "var(--ink-2)", "stroke-width": 1 }));
+
+  // Series: the drivers whose win chance has been highest at any point. Colour is
+  // the team's; the second car of a team is dashed so team mates stay apart.
+  const best = new Map();
+  for (const u of laps) for (const d of u.drivers) best.set(d.driver_id, Math.max(best.get(d.driver_id) || 0, d.p_win));
+  const ids = [...best.entries()].sort((a, b) => b[1] - a[1]).slice(0, SERIES).map(([id]) => id);
+  const info = new Map();
+  const teamSeen = new Map();
+  const last = laps[laps.length - 1];
+  const ordered = [...ids].sort((a, b) => {
+    const pa = last.drivers.find((d) => d.driver_id === a), pb = last.drivers.find((d) => d.driver_id === b);
+    return (pa ? pa.grid_position : 99) - (pb ? pb.grid_position : 99);
+  });
+  for (const id of ordered) {
+    const sample = laps.flatMap((u) => u.drivers).find((d) => d.driver_id === id);
+    const team = sample.team_name || sample.team_colour;
+    const dashed = teamSeen.has(team);
+    teamSeen.set(team, true);
+    info.set(id, { code: sample.code, colour: safeColour(sample.team_colour), dashed });
+  }
+  const labels = [];
+  for (const id of ids) {
+    const meta = info.get(id);
+    const points = laps.map((u) => [u.lap, u.drivers.find((d) => d.driver_id === id)])
+      .filter(([, d]) => d).map(([lap, d]) => [x(lap), y(d.p_win)]);
+    if (!points.length) continue;
+    // A 2px surface-coloured halo keeps crossing lines readable.
+    const path = points.map(([px, py], i) => `${i ? "L" : "M"}${px.toFixed(1)},${py.toFixed(1)}`).join("");
+    chart.append(svg("path", { d: path, fill: "none", stroke: "var(--panel)", "stroke-width": 4,
+      "stroke-linejoin": "round" }));
+    chart.append(svg("path", { d: path, fill: "none", stroke: meta.colour, "stroke-width": 2,
+      "stroke-linejoin": "round", "stroke-linecap": "round",
+      "stroke-dasharray": meta.dashed ? "6 4" : "none" }));
+    const [ex, ey] = points[points.length - 1];
+    labels.push({ x: ex, y: ey, code: meta.code });
+    const item = el("span");
+    const swatch = svg("svg", { width: 18, height: 6 });
+    swatch.append(svg("line", { x1: 0, x2: 18, y1: 3, y2: 3, stroke: meta.colour, "stroke-width": 2.5,
+      "stroke-dasharray": meta.dashed ? "4 3" : "none" }));
+    item.append(swatch, meta.code);
+    $("legend").append(item);
+  }
+  // Direct labels at the line ends, nudged apart so they never overlap.
+  labels.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < labels.length; i++) labels[i].y = Math.max(labels[i].y, labels[i - 1].y + 12);
+  const floor = y(0);
+  for (let i = labels.length - 1; i >= 0; i--) {
+    const limit = i === labels.length - 1 ? floor : labels[i + 1].y - 12;
+    labels[i].y = Math.min(labels[i].y, limit);
+  }
+  for (const l of labels) {
+    const t = svg("text", { x: l.x + 6, y: l.y + 4, fill: "var(--ink)", "font-size": 11, "font-weight": 600 });
+    t.textContent = l.code;
+    chart.append(t);
+  }
+  attachHover(chart, laps, ids, info, x, y, maxLap);
+}
+
+function attachHover(chart, laps, ids, info, x, y, maxLap) {
+  const cross = svg("line", { y1: M.top, y2: H - M.bottom, stroke: "var(--muted)",
+    "stroke-width": 1, visibility: "hidden" });
+  const hit = svg("rect", { x: M.left, y: 0, width: W - M.left - M.right, height: H, fill: "transparent" });
+  chart.append(cross, hit);
+  const tip = $("tooltip");
+  const move = (event) => {
+    const box = chart.getBoundingClientRect();
+    const sx = ((event.clientX - box.left) / box.width) * W;
+    const lap = Math.round(((sx - M.left) / (W - M.left - M.right)) * maxLap);
+    const u = laps.find((v) => v.lap === lap) || laps.reduce((a, b) => (Math.abs(b.lap - lap) < Math.abs(a.lap - lap) ? b : a));
+    cross.setAttribute("x1", x(u.lap)); cross.setAttribute("x2", x(u.lap));
+    cross.setAttribute("visibility", "visible");
+    tip.replaceChildren(el("b", {}, u.lap === 0 ? "Before the start" : `Lap ${u.lap} · ${u.track_status}`));
+    const rows = ids.map((id) => [id, u.drivers.find((d) => d.driver_id === id)]).filter(([, d]) => d)
+      .sort((a, b) => b[1].p_win - a[1].p_win);
+    for (const [id, d] of rows) {
+      const line = el("div");
+      line.append(el("i", { style: `background:${info.get(id).colour}` }), `${d.code} ${pct(d.p_win)}  (P${d.position})`);
+      tip.append(line);
+    }
+    tip.style.display = "block";
+    const left = ((x(u.lap) / W) * box.width);
+    tip.style.left = `${Math.min(left + 12, box.width - tip.offsetWidth)}px`;
+    tip.style.top = "8px";
+  };
+  hit.addEventListener("pointermove", move);
+  hit.addEventListener("pointerleave", () => { tip.style.display = "none"; cross.setAttribute("visibility", "hidden"); });
+}
+
+let resizeTimer = 0;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(drawChart, 150);
+});
+init().catch((error) => showBanner(`Could not reach the server: ${error}`));
+</script>
+</body>
+</html>
