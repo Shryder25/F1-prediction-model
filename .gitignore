@@ -8,3 +8,6 @@ dist/
 *.egg-info/
 # Local data: rebuilt by `f1pred ingest`
 data/
+# Dagster local state
+.tmp_dagster_home*/
+dagster_home/
