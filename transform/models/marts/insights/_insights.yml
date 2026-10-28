@@ -1,0 +1,57 @@
+version: 2
+
+models:
+  - name: mart_grid_conversion
+    description: >
+      Win, podium and points conversion by grid slot and season. Counts add up
+      across seasons; rates are per season.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [season, grid_position]
+    columns:
+      - name: win_rate
+        data_tests:
+          - between:
+              arguments: {min_value: 0, max_value: 1}
+
+  - name: mart_circuit_overtaking
+    description: How closely each race finished in grid order, by circuit and season.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [season, circuit_id]
+    columns:
+      - name: grid_finish_correlation
+        data_tests:
+          - between:
+              arguments: {min_value: -1, max_value: 1}
+
+  - name: mart_driver_race_craft
+    description: Places each driver gains on Sunday versus what their grid slot predicts.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [season, driver_id]
+
+  - name: mart_pit_stop_team_performance
+    description: Team pit stop performance per season, as delta to the race median stop.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [season, constructor_id]
+
+  - name: mart_tyre_degradation
+    description: >
+      Median fuel-corrected degradation (seconds per lap of tyre age) by circuit,
+      compound and season. Empty until FastF1 data is loaded.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [season, circuit_id, compound]
+    columns:
+      - name: compound
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [SOFT, MEDIUM, HARD]

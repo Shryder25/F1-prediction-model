@@ -1,0 +1,98 @@
+version: 2
+
+models:
+  - name: dim_race
+    description: One row per race, with circuit and race length.
+    columns:
+      - name: race_id
+        description: season * 100 + round, e.g. 202405.
+        data_tests: [unique, not_null]
+
+  - name: dim_circuit
+    description: One row per circuit, with when it was used.
+    columns:
+      - name: circuit_id
+        data_tests: [unique, not_null]
+
+  - name: dim_driver
+    description: >
+      One row per driver. Maps Ergast driver ids to the 3-letter codes and car
+      numbers that live timing uses.
+    columns:
+      - name: driver_id
+        data_tests: [unique, not_null]
+
+  - name: dim_constructor
+    description: One row per constructor, with display name and team colour.
+    columns:
+      - name: constructor_id
+        data_tests: [unique, not_null]
+      - name: team_colour
+        data_tests: [not_null]
+
+  - name: fct_race_results
+    description: One row per driver per race start.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, driver_id]
+    columns:
+      - name: race_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_race')
+                field: race_id
+      - name: driver_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_driver')
+                field: driver_id
+      - name: constructor_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_constructor')
+                field: constructor_id
+
+  - name: fct_qualifying
+    description: One row per driver per qualifying session, with gaps to pole and team mate.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, driver_id]
+    columns:
+      - name: gap_to_pole_pct
+        data_tests:
+          - between:
+              arguments: {min_value: 0, max_value: 50}
+
+  - name: fct_laps
+    description: >
+      One row per driver per lap. Tyre columns are filled when FastF1 data is
+      loaded (2018 onward). gap_to_leader_s is cumulative race time behind the
+      car in P1 at the end of that lap.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, driver_id, lap]
+    columns:
+      - name: race_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_race')
+                field: race_id
+
+  - name: fct_pit_stops
+    description: >
+      One row per pit stop. pit_lane_time_s is pit lane entry to exit, not the
+      stationary time. delta_to_race_median_s compares stops within one race.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, driver_id, stop_number]
+    columns:
+      - name: constructor_id
+        data_tests: [not_null]

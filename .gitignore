@@ -11,3 +11,7 @@ data/
 # Dagster local state
 .tmp_dagster_home*/
 dagster_home/
+# dbt build output
+transform/target/
+transform/logs/
+transform/dbt_packages/

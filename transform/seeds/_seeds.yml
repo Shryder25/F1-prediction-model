@@ -1,0 +1,13 @@
+version: 2
+
+seeds:
+  - name: constructor_branding
+    description: Display names and team colours for constructors from 2018 onward.
+    config:
+      column_types:
+        constructor_id: varchar
+        constructor_name: varchar
+        team_colour: varchar
+    columns:
+      - name: constructor_id
+        data_tests: [unique, not_null]
