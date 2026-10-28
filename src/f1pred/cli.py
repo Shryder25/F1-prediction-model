@@ -2,6 +2,7 @@
 
 Stage 1: `ingest`, `ingest-fastf1`, `load`, `check`.
 Stage 2: `transform` (dbt build), `docs`, `findings`, `dashboard`, and `demo`.
+Stage 3: `evaluate` (train, score against baselines, write the report).
 Add `--demo` before any command to use the synthetic demo warehouse in data/demo.
 """
 
@@ -53,11 +54,28 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("check", help="Run data quality checks on the warehouse")
     demo_cmd = sub.add_parser("demo", help="Build a synthetic demo warehouse (no network)")
     demo_cmd.add_argument("--seed", type=int, default=7)
+    demo_cmd.add_argument(
+        "--seasons",
+        type=parse_seasons,
+        default=list(demo.SEASONS),
+        help="Seasons to simulate. The model needs 3+, e.g. 2019-2026",
+    )
     dbt = sub.add_parser("transform", help="Build and test the dbt models (dbt build)")
     dbt.add_argument("--select", "-s", help="dbt node selection, e.g. +mart_grid_conversion")
     sub.add_parser("docs", help="Generate dbt docs (open with `dbt docs serve`)")
     sub.add_parser("findings", help="Print the headline finding of each analysis")
     sub.add_parser("dashboard", help="Open the Streamlit insights dashboard")
+    evaluate = sub.add_parser(
+        "evaluate", help="Train the models, score them on unseen seasons, write the report"
+    )
+    evaluate.add_argument("--train", type=parse_seasons, help="Training seasons, e.g. 2018-2023")
+    evaluate.add_argument("--validation", type=int, help="Season used to choose settings")
+    evaluate.add_argument("--test", type=int, help="Season scored once, for the report")
+    evaluate.add_argument(
+        "--holdout", type=parse_seasons, default=[], help="Seasons scored separately"
+    )
+    evaluate.add_argument("--out", type=Path, help="Report folder (default <data>/reports/model)")
+    evaluate.add_argument("--quick", action="store_true", help="Smaller search, for smoke tests")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -83,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
             failed += bad_rows > 0
         return 1 if failed else 0
     elif args.command == "demo":
-        counts = demo.build(settings.data_dir, seed=args.seed)
+        counts = demo.build(settings.data_dir, seed=args.seed, seasons=args.seasons)
         for table, count in counts.items():
             print(f"{table:24} {count:>10,} rows")
         print(f"Demo warehouse: {settings.warehouse_path}. Next: f1pred --demo transform")
@@ -105,6 +123,31 @@ def main(argv: list[str] | None = None) -> int:
         app = Path(__file__).parent / "dashboard" / "app.py"
         command = [sys.executable, "-m", "streamlit", "run", str(app)]
         return subprocess.call([*command, "--", "--warehouse", str(settings.warehouse_path)])
+    elif args.command == "evaluate":
+        return _evaluate(settings, args)
+    return 0
+
+
+def _evaluate(settings: Settings, args: argparse.Namespace) -> int:
+    # Imported here: the model libraries are an optional dependency group.
+    from f1pred.model.dataset import SeasonSplit
+    from f1pred.model.report import build_report
+
+    split = None
+    explicit = (args.train, args.validation, args.test)
+    if any(explicit):
+        if not all(explicit):
+            print("Give all of --train, --validation and --test, or none of them.")
+            return 2
+        split = SeasonSplit(tuple(args.train), args.validation, args.test, tuple(args.holdout))
+    out = args.out or settings.data_dir / "reports" / "model"
+    try:
+        metrics = build_report(settings.warehouse_path, out, split=split, quick=args.quick)
+    except ValueError as error:  # e.g. too few seasons loaded for a split
+        print(f"Cannot evaluate: {error}")
+        return 2
+    print(f"Report: {out / 'report.md'}")
+    print(f"Saved models: {metrics['deployed_models']}")
     return 0
 
 

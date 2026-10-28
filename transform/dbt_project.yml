@@ -18,6 +18,10 @@ vars:
   min_stint_laps: 5
   # Pit lane times above this are red flags, penalties or garage stops, not normal stops.
   pit_stop_outlier_s: 60
+  # Model features: how many previous races count as "recent form", and how
+  # many recent clean laps make up "recent pace".
+  form_window_races: 5
+  recent_pace_laps: 3
 
 models:
   f1pred:
