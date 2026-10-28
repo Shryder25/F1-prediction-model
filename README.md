@@ -12,7 +12,7 @@ lap, during a replay or a live race.
 | --- | --- | --- |
 | 1 | Ingestion pipeline: Jolpica + FastF1 ingestion, Parquet raw layer, DuckDB warehouse, Dagster orchestration, quality checks | In progress |
 | 2 | Warehouse modelling (dbt), three insight analyses and a Streamlit dashboard | In progress |
-| 3 | Prediction model and evaluation | Planned |
+| 3 | Pre-race and lap-by-lap prediction models, evaluated against baselines on unseen seasons | In progress |
 | 4 | Streaming replay/live pipeline and HUD | Planned |
 
 ## Architecture (stage 1)
@@ -50,6 +50,26 @@ raw_* tables ──► dbt staging (views: typed, renamed, one model per source 
 on every build. FastF1 data is optional: without it the tyre models build empty instead
 of failing.
 
+## Architecture (stage 3)
+
+```
+marts.fct_* ──► marts.ml_pre_race_features   (one row per driver per race; only pre-race info)
+            └─► marts.ml_lap_features        (one row per driver per lap; only laps so far)
+                     │
+                     ▼
+   season split: train 2018-2023 · choose settings on 2024 · score once on 2025 · 2026 apart
+                     │
+                     ▼
+   baselines (grid order, current order) vs logistic regression vs XGBoost
+                     │
+                     ▼
+   report.md: Brier score, log loss, position MAE, calibration, 95% race-bootstrap intervals
+   models/pre_race.joblib, models/lap.joblib  (for the stage 4 live predictor)
+```
+
+A dbt test recomputes driver form independently and fails if any feature sees the race
+it predicts. Method and limitations: [`docs/model`](docs/model).
+
 Sources: [Jolpica F1](https://github.com/jolpica/jolpica-f1), the maintained replacement for
 the Ergast API (which shut down in 2024), and [FastF1](https://docs.fastf1.dev/) for tyre,
 stint, track status and weather data from 2018 onward.
@@ -85,6 +105,25 @@ uv run f1pred --demo dashboard
 ```
 
 The write-ups for each analysis are in [`docs/insights`](docs/insights).
+
+### Prediction model (stage 3)
+
+```bash
+uv run f1pred transform      # builds the ml_* feature tables with the other marts
+uv run f1pred evaluate       # tune, train, score; writes data/reports/model/report.md
+```
+
+The default split follows the plan (train 2018-2023, validate 2024, test 2025, 2026 scored
+separately) and adapts to the seasons you have loaded. Set it yourself with
+`--train 2018-2022 --validation 2023 --test 2024 --holdout 2025`.
+
+On the demo data, simulate enough seasons for a split first:
+
+```bash
+uv run f1pred demo --seasons 2019-2026
+uv run f1pred --demo transform
+uv run f1pred --demo evaluate
+```
 
 ### Running with Dagster
 
@@ -149,3 +188,5 @@ Built into the `staging`, `intermediate` and `marts` schemas of the same warehou
 | `mart_driver_race_craft` | season x driver: places gained versus grid expectation |
 | `mart_pit_stop_team_performance` | season x team: pit stop speed and consistency |
 | `mart_tyre_degradation` | season x circuit x compound: fuel-corrected degradation |
+| `ml_pre_race_features` | one row per driver per race start: grid, qualifying gaps, form, track history, labels |
+| `ml_lap_features` | one row per driver per lap: position, gaps, recent pace, tyres, stops, labels |

@@ -1,0 +1,62 @@
+version: 2
+
+models:
+  - name: ml_pre_race_features
+    description: >
+      Model input for the pre-race predictor. One row per driver per race start.
+      Features use only information available before the race (rolling windows end
+      at the previous race; standings are from the previous round). Columns that
+      start with label_ are the outcome and must never be used as features.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, driver_id]
+    columns:
+      - name: race_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_race')
+                field: race_id
+      - name: grid_position
+        data_tests: [not_null]
+      - name: driver_finish_last5
+        description: Mean finishing order over the driver's previous 5 starts. Null on debut.
+      - name: driver_dnf_rate_last10
+        data_tests:
+          - between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: driver_track_gained
+        description: Mean positions gained (grid minus finish) in previous races at this circuit.
+      - name: championship_position_before
+        description: Championship position after the previous round. Null in round 1.
+      - name: label_finishing_order
+        data_tests: [not_null]
+
+  - name: ml_lap_features
+    description: >
+      Model input for the lap-by-lap predictor. One row per driver per completed
+      lap, describing the race state at the end of that lap. Features use only
+      this lap and earlier laps.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [race_id, driver_id, lap]
+    columns:
+      - name: race_progress
+        data_tests:
+          - not_null
+          - between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: gap_to_car_ahead_s
+        description: Seconds behind the car one place ahead. Null for the leader.
+        data_tests:
+          - between:
+              arguments: {min_value: 0, max_value: 100000}
+      - name: recent_pace_vs_field_s
+        description: >
+          Mean of (lap time minus the field's median for that lap) over the last
+          3 clean laps. Negative means faster than the field.
+      - name: pit_stops_made
+        data_tests: [not_null]

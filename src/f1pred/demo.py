@@ -11,6 +11,7 @@ Everything here is made up. The dashboard shows a banner when it reads demo data
 from __future__ import annotations
 
 import random
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -262,8 +263,12 @@ def _race(rng: random.Random, season: int, round_: int, circuit: Circuit) -> dic
     return out
 
 
-def generate(raw_dir: Path, seed: int = 7) -> int:
-    """Write a synthetic raw layer for two seasons. Returns rows written."""
+def generate(raw_dir: Path, seed: int = 7, seasons: Sequence[int] = SEASONS) -> int:
+    """Write a synthetic raw layer, two seasons by default. Returns rows written.
+
+    The model tests pass more seasons, so there is enough history for a
+    train / validation / test split by season.
+    """
     rng = random.Random(seed)
     written = 0
     circuits = [
@@ -281,7 +286,7 @@ def generate(raw_dir: Path, seed: int = 7) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(circuits).to_parquet(path, index=False)
 
-    for season in SEASONS:
+    for season in seasons:
         driver_points: dict[str, float] = {d.driver_id: 0.0 for d in DRIVERS}
         driver_wins: dict[str, int] = {d.driver_id: 0 for d in DRIVERS}
         for round_, circuit in enumerate(CIRCUITS, start=1):
@@ -332,10 +337,10 @@ def _write_standings(
     return len(drivers) + len(teams)
 
 
-def build(data_dir: Path, seed: int = 7) -> dict[str, int]:
+def build(data_dir: Path, seed: int = 7, seasons: Sequence[int] = SEASONS) -> dict[str, int]:
     """Generate the demo raw layer and load it into `<data_dir>/warehouse.duckdb`."""
     raw_dir = data_dir / "raw"
-    generate(raw_dir, seed)
+    generate(raw_dir, seed, seasons)
     warehouse_path = data_dir / "warehouse.duckdb"
     counts = warehouse.load(raw_dir, warehouse_path)
     with duckdb.connect(str(warehouse_path)) as con:

@@ -29,3 +29,13 @@ jobs:
             transform/target/index.html
             transform/target/manifest.json
             transform/target/catalog.json
+      - name: Model evaluation on the demo warehouse
+        run: |
+          uv run f1pred demo --seasons 2019-2026
+          uv run f1pred --demo transform
+          uv run f1pred --demo evaluate --quick
+      - name: Upload model report
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-report-demo
+          path: data/demo/reports/model
