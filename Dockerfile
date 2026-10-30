@@ -1,5 +1,6 @@
-# The replay service and HUD. Builds the synthetic demo on first start if no
-# models exist, so `docker compose up` works with no API access.
+# The replay service and HUD. The synthetic demo warehouse and models are built
+# into the image (BAKE_DEMO=1, the default), so a hosted demo starts in seconds
+# with no API access. With BAKE_DEMO=0 they are built on first start instead.
 FROM python:3.12-slim
 
 RUN pip install --no-cache-dir uv==0.11.32
@@ -26,8 +27,16 @@ RUN uv sync --frozen --no-dev --group model --group serve --group transform \
     && chmod +x /usr/local/bin/entrypoint.sh
 
 USER f1
+ARG BAKE_DEMO=1
+RUN if [ "$BAKE_DEMO" = "1" ]; then \
+        f1pred demo --seasons 2019-2026 \
+        && f1pred --demo transform \
+        && f1pred --demo evaluate --quick \
+        && rm -rf transform/target transform/logs; \
+    fi
+
 EXPOSE 8000
-HEALTHCHECK --interval=30s --timeout=5s --start-period=600s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT:-8000}/api/health')"
 
 ENTRYPOINT ["entrypoint.sh"]

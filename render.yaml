@@ -1,0 +1,13 @@
+# Render Blueprint for the public demo: Dashboard > New > Blueprint, pick this repo.
+# The free plan sleeps after 15 idle minutes; the first visit after that takes ~1 minute.
+services:
+  - type: web
+    name: f1pred-hud
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: F1PRED_DEMO
+        value: "1"
