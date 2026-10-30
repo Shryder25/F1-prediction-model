@@ -1,5 +1,9 @@
 # F1 Prediction Model
 
+[![CI](https://github.com/Shryder25/F1-prediction-model/actions/workflows/ci.yml/badge.svg)](https://github.com/Shryder25/F1-prediction-model/actions/workflows/ci.yml)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
+![dbt + DuckDB](https://img.shields.io/badge/warehouse-dbt%20%2B%20DuckDB-orange)
+
 An F1 data platform and lap-by-lap race outcome predictor.
 
 The project ingests historical race data, models it into a DuckDB warehouse, trains a model
@@ -10,10 +14,11 @@ predictions to a browser HUD during a replay or a live race.
 
 | Stage | What | Status |
 | --- | --- | --- |
-| 1 | Ingestion pipeline: Jolpica + FastF1 ingestion, Parquet raw layer, DuckDB warehouse, Dagster orchestration, quality checks | In progress |
-| 2 | Warehouse modelling (dbt), three insight analyses and a Streamlit dashboard | In progress |
-| 3 | Pre-race and lap-by-lap prediction models, evaluated against baselines on unseen seasons | In progress |
-| 4 | Streaming replay/live pipeline, FastAPI SSE service, HUD and Docker | In progress |
+| 1 | Ingestion pipeline: Jolpica + FastF1 ingestion, Parquet raw layer, DuckDB warehouse, Dagster orchestration, quality checks | Done |
+| 2 | Warehouse modelling (dbt), three insight analyses and a Streamlit dashboard | Done |
+| 3 | Pre-race and lap-by-lap prediction models, evaluated against baselines on unseen seasons | Done |
+| 4 | Streaming replay/live pipeline, FastAPI SSE service, HUD and Docker | Done |
+| Next | Results from the real 2018-2026 run, public demo ([deploy guide](docs/deploy.md)), demo video ([script](docs/demo-video.md)) | In progress |
 
 ## Architecture (stage 1)
 
@@ -101,6 +106,19 @@ uv run f1pred check                      # run data quality checks
 uv run f1pred ingest-fastf1 --seasons 2024   # add tyre, stint and weather data
 ```
 
+### Everything in one command
+
+```bash
+uv sync --all-groups
+uv run f1pred pipeline                   # 2018-2026: ingest, FastF1, load, check, dbt, evaluate
+```
+
+It runs the steps in order, stops at the first failure and tells you how to resume
+(`uv run f1pred pipeline --from transform`, say). At the end it writes
+`data/reports/results.md` with the insight findings and the model scores in one file.
+Jolpica allows about one season per hour, so the full run takes most of a night; every
+response is cached, so stopping and restarting loses nothing.
+
 ### Modelling and insights (stage 2)
 
 ```bash
@@ -152,12 +170,14 @@ uv run f1pred serve --openf1-session 9472 --race-id 202401   # also stream an Op
 warehouse. Following a race that is running now needs an OpenF1 account token in
 `F1PRED_OPENF1_TOKEN` and the race distance (`--total-laps 57`); past sessions are free.
 
-The whole demo, with nothing installed but Docker (the first start builds the synthetic
-warehouse and models, which takes a few minutes):
+The whole demo, with nothing installed but Docker (the image build trains the synthetic
+demo models, which takes a few minutes; after that it starts in seconds):
 
 ```bash
 docker compose up                        # http://localhost:8000
 ```
+
+Hosting it publicly on Hugging Face Spaces or Render: [`docs/deploy.md`](docs/deploy.md).
 
 ### Running with Dagster
 

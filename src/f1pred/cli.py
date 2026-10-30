@@ -4,6 +4,7 @@ Stage 1: `ingest`, `ingest-fastf1`, `load`, `check`.
 Stage 2: `transform` (dbt build), `docs`, `findings`, `dashboard`, and `demo`.
 Stage 3: `evaluate` (train, score against baselines, write the report).
 Stage 4: `replay` (a past race in the terminal) and `serve` (the SSE service and HUD).
+`pipeline` runs every step from ingestion to the model report in order.
 Add `--demo` before any command to use the synthetic demo warehouse in data/demo.
 """
 
@@ -81,6 +82,18 @@ def main(argv: list[str] | None = None) -> int:
     replay.add_argument("race_id", type=int, help="e.g. 202405 for 2024 round 5")
     replay.add_argument("--interval", type=float, default=0.0, help="Seconds between laps")
     replay.add_argument("--models", type=Path, help="Model folder (default from evaluate)")
+    pipeline = sub.add_parser(
+        "pipeline", help="Run every step, ingestion to model report, and write results.md"
+    )
+    pipeline.add_argument("--seasons", default="2018-2026", type=parse_seasons)
+    pipeline.add_argument(
+        "--from",
+        dest="start",
+        choices=PIPELINE_STEPS,
+        default=PIPELINE_STEPS[0],
+        help="Start at this step, e.g. --from transform once the data is loaded",
+    )
+    pipeline.add_argument("--quick", action="store_true", help="Smaller model search")
     serve = sub.add_parser("serve", help="Serve replays (and a live race) to the HUD")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
@@ -149,7 +162,61 @@ def main(argv: list[str] | None = None) -> int:
         return _replay(settings, args)
     elif args.command == "serve":
         return _serve(settings, args)
+    elif args.command == "pipeline":
+        return _pipeline(settings, args)
     return 0
+
+
+PIPELINE_STEPS = ("ingest", "ingest-fastf1", "load", "check", "transform", "evaluate")
+
+
+def _pipeline(settings: Settings, args: argparse.Namespace) -> int:
+    """Run the steps in order, stop at the first failure, then write results.md."""
+    seasons = ",".join(str(s) for s in args.seasons)
+    commands = {
+        "ingest": ["ingest", "--seasons", seasons],
+        "ingest-fastf1": ["ingest-fastf1", "--seasons", seasons],
+        "load": ["load"],
+        "check": ["check"],
+        "transform": ["transform"],
+        "evaluate": ["evaluate", *(["--quick"] if args.quick else [])],
+    }
+    prefix = ["--demo"] if args.demo else []
+    for step in PIPELINE_STEPS[PIPELINE_STEPS.index(args.start) :]:
+        print(f"\n=== f1pred {' '.join(commands[step])} ===", flush=True)
+        code = main([*prefix, *commands[step]])
+        if code:
+            print(f"Step '{step}' failed. Fix it, then resume with: f1pred pipeline --from {step}")
+            return code
+    path = write_results(settings)
+    print(f"\nDone. Summary of findings and model scores: {path}")
+    return 0
+
+
+def write_results(settings: Settings) -> Path:
+    """Put the insight findings and the model report in one file to share."""
+    with insights.connect(settings.warehouse_path) as con:
+        demo_note = "Synthetic demo data, not real races.\n\n" if insights.is_demo(con) else ""
+        loaded = insights.seasons(con)
+        findings = insights.headline_findings(con, loaded)
+    report = settings.data_dir / "reports" / "model" / "report.md"
+    lines = [
+        "# f1pred results",
+        "",
+        f"{demo_note}Seasons loaded: {loaded[0]}-{loaded[-1]}." if loaded else demo_note,
+        "",
+        "## Insight findings",
+        "",
+        *(f"- {finding}" for finding in findings),
+        "",
+        "## Model report",
+        "",
+        report.read_text() if report.exists() else "_No model report yet: run f1pred evaluate._",
+    ]
+    path = settings.data_dir / "reports" / "results.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+    return path
 
 
 def _evaluate(settings: Settings, args: argparse.Namespace) -> int:

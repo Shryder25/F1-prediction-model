@@ -1,0 +1,49 @@
+name: Deploy demo to Hugging Face
+
+# Pushes the app to a Hugging Face Docker Space on every push to main.
+# One-time setup (see docs/deploy.md): add the repository secret HF_TOKEN (a write token)
+# and the repository variable HF_SPACE, e.g. your-hf-username/f1-race-predictor.
+# Until both exist this workflow skips itself.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-space
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: vars.HF_SPACE != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Collect the files the image needs
+        run: |
+          mkdir -p space
+          cp -r Dockerfile .dockerignore pyproject.toml uv.lock src transform docker space/
+          cp docker/space/README.md space/README.md
+      - name: Upload to the Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+        run: |
+          uv run --no-project --with huggingface_hub python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          space = os.environ["HF_SPACE"]
+          api.create_repo(space, repo_type="space", space_sdk="docker", exist_ok=True)
+          api.upload_folder(
+              repo_id=space,
+              repo_type="space",
+              folder_path="space",
+              commit_message=f"Deploy {os.environ['GITHUB_SHA'][:7]}",
+              delete_patterns=["src/**", "transform/**", "docker/**"],
+          )
+          print(f"https://huggingface.co/spaces/{space}")
+          PY
