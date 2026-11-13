@@ -31,6 +31,8 @@ POINTS = (25, 18, 15, 12, 10, 8, 6, 4, 2, 1)
 FUEL_S_PER_LAP = 0.05
 # True tyre degradation in seconds per lap of tyre age, before the circuit multiplier.
 COMPOUND_DEG = {"SOFT": 0.09, "MEDIUM": 0.06, "HARD": 0.035}
+# Share of the normal pit loss a stop costs when the car pits under a safety car.
+SC_PIT_COST_SHARE = 0.5
 
 
 @dataclass(frozen=True)
@@ -188,7 +190,12 @@ def _race(rng: random.Random, season: int, round_: int, circuit: Circuit) -> dic
             if lap in safety_car:
                 lap_s += 30
             if pit_out:
-                lap_s += circuit.pit_lane_s - 2
+                pit_cost = circuit.pit_lane_s - 2
+                if lap - 1 in safety_car:
+                    # The field crawled behind the safety car while this car was in
+                    # the pit lane, so the stop cost less relative to the others.
+                    pit_cost *= SC_PIT_COST_SHARE
+                lap_s += pit_cost
             car.elapsed_s += lap_s
             car.last_lap_s = lap_s
             car.laps_done = lap

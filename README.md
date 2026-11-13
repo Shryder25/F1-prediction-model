@@ -110,7 +110,7 @@ uv run f1pred ingest-fastf1 --seasons 2024   # add tyre, stint and weather data
 
 ```bash
 uv sync --all-groups
-uv run f1pred pipeline                   # 2018-2026: ingest, FastF1, load, check, dbt, evaluate
+uv run f1pred pipeline                   # 2018-2026: ingest, FastF1, load, check, dbt, strategy, evaluate
 ```
 
 It runs the steps in order, stops at the first failure and tells you how to resume
@@ -138,6 +138,19 @@ uv run f1pred --demo dashboard
 ```
 
 The write-ups for each analysis are in [`docs/insights`](docs/insights).
+
+### Strategy analysis
+
+```bash
+uv run f1pred strategy                   # build strategy.* tables, print the headline rates
+uv run f1pred strategy --race 202405     # one race: stints, undercuts, SC stops, pit windows
+```
+
+Fuel-corrected stint pace and degradation, undercut and overcut success, how much a stop
+under a safety car or VSC saves, and a pit window model that says whether each stop was
+early, in the window or late. From Python, `f1pred.strategy.race_strategy(con, race_id)`
+returns the same tables for one race. Method, assumptions and limits:
+[`docs/strategy`](docs/strategy/README.md).
 
 ### Prediction model (stage 3)
 
@@ -245,3 +258,15 @@ Built into the `staging`, `intermediate` and `marts` schemas of the same warehou
 | `mart_tyre_degradation` | season x circuit x compound: fuel-corrected degradation |
 | `ml_pre_race_features` | one row per driver per race start: grid, qualifying gaps, form, track history, labels |
 | `ml_lap_features` | one row per driver per lap: position, gaps, recent pace, tyres, stops, labels |
+
+### Strategy tables
+
+Written by `f1pred strategy` (Python, from `fct_laps` and `fct_pit_stops`) into the
+`strategy` schema.
+
+| Table | Grain |
+| --- | --- |
+| `strategy.stints` | one row per driver stint: fuel-corrected pace, degradation slope and fit |
+| `strategy.pit_battles` | one row per undercut or overcut attempt, with gaps before and after |
+| `strategy.safety_car_stops` | one row per stop under SC or VSC, with time saved against a green stop |
+| `strategy.pit_windows` | one row per stop: modelled best lap, window, verdict, time lost |
