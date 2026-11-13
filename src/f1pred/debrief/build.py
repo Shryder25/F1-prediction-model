@@ -38,6 +38,7 @@ from f1pred.debrief.model import (
     WinProbabilitySeries,
 )
 from f1pred.demo import DEMO_MARKER_TABLE
+from f1pred.strategy import race_strategy
 
 log = logging.getLogger(__name__)
 
@@ -302,14 +303,8 @@ def _series(
 def _strategy(
     con: duckdb.DuckDBPyConnection, race_id: int, entries: pd.DataFrame
 ) -> StrategySection:
-    try:
-        from f1pred.strategy import race_strategy
-    except ImportError:
-        return StrategySection(available=False, note="The strategy module is not installed.")
     rs = race_strategy(con, race_id)
-    return strategy_section(
-        rs.stints, rs.pit_battles, rs.safety_car_stops, getattr(rs, "pit_windows", None), entries
-    )
+    return strategy_section(rs.stints, rs.pit_battles, rs.safety_car_stops, rs.pit_windows, entries)
 
 
 def strategy_section(
