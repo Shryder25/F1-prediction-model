@@ -5,6 +5,7 @@ Stage 2: `transform` (dbt build), `docs`, `findings`, `dashboard`, and `demo`.
 Strategy: `strategy` (stint pace, undercuts, safety car stops, pit windows).
 Stage 3: `evaluate` (train, score against baselines, write the report).
 Stage 4: `replay` (a past race in the terminal) and `serve` (the SSE service and HUD).
+Debrief: `debrief` (post-race report) and `debrief-site` (the GitHub Pages site).
 `pipeline` runs every step from ingestion to the model report in order.
 Add `--demo` before any command to use the synthetic demo warehouse in data/demo.
 """
@@ -117,6 +118,23 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument(
         "--poll", type=float, default=15.0, help="Seconds between OpenF1 polls while live"
     )
+    debrief = sub.add_parser(
+        "debrief", help="Write the post-race debrief (predicted vs actual, strategy, tyres)"
+    )
+    debrief.add_argument(
+        "races",
+        nargs="*",
+        default=["latest"],
+        help="Race ids, e.g. 202605, or 'latest' (default)",
+    )
+    debrief.add_argument("--season", type=int, help="Debrief every race of this season")
+    debrief.add_argument(
+        "--out", type=Path, help="Folder (default docs/debriefs, or <data>/debriefs with --demo)"
+    )
+    debrief.add_argument("--models", type=Path, help="Model folder (default from evaluate)")
+    site = sub.add_parser("debrief-site", help="Build the HTML debrief site from saved debriefs")
+    site.add_argument("--src", type=Path, default=Path("docs/debriefs"))
+    site.add_argument("--out", type=Path, default=Path("site"))
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -174,6 +192,48 @@ def main(argv: list[str] | None = None) -> int:
         return _serve(settings, args)
     elif args.command == "pipeline":
         return _pipeline(settings, args)
+    elif args.command == "debrief":
+        return _debrief(settings, args)
+    elif args.command == "debrief-site":
+        from f1pred.debrief.site import build_site
+
+        pages = build_site(args.src, args.out)
+        print(f"Site: {pages[0]} ({len(pages) - 1} debriefs)")
+    return 0
+
+
+def debrief_dir(settings: Settings, demo_mode: bool) -> Path:
+    """Real debriefs are committed under docs/; demo ones stay with the demo data."""
+    return settings.data_dir / "debriefs" if demo_mode else Path("docs/debriefs")
+
+
+def _debrief(settings: Settings, args: argparse.Namespace) -> int:
+    import duckdb
+
+    from f1pred.debrief import build_debrief, latest_race_id
+    from f1pred.debrief.site import write_debrief
+
+    try:
+        if args.season:
+            with duckdb.connect(str(settings.warehouse_path), read_only=True) as con:
+                rows = con.execute(
+                    "SELECT DISTINCT race_id FROM marts.fct_race_results "
+                    "WHERE season = ? AND classified_position IS NOT NULL ORDER BY race_id",
+                    [args.season],
+                ).fetchall()
+            race_ids = [int(r[0]) for r in rows]
+        else:
+            race_ids = [
+                latest_race_id(settings.warehouse_path) if r == "latest" else int(r)
+                for r in args.races
+            ]
+        out = args.out or debrief_dir(settings, args.demo)
+        for race_id in race_ids:
+            d = build_debrief(settings.warehouse_path, race_id, args.models or settings.model_dir)
+            print(f"{write_debrief(d, out)}: {d.headlines[0] if d.headlines else ''}")
+    except (KeyError, ValueError, duckdb.Error) as error:
+        print(f"Cannot write the debrief: {error}")
+        return 2
     return 0
 
 

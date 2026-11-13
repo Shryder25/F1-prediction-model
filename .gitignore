@@ -15,3 +15,5 @@ dagster_home/
 transform/target/
 transform/logs/
 transform/dbt_packages/
+# Debrief site output: rebuilt by `f1pred debrief-site`
+site/
