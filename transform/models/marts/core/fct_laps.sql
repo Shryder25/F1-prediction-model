@@ -42,6 +42,7 @@ select
     e.is_safety_car,
     e.is_virtual_safety_car,
     e.is_red_flag,
+    e.is_accurate,
     e.has_tyre_data
 from elapsed as e
 left join leader as l using (race_id, lap)
