@@ -1,22 +1,29 @@
-"""Dagster assets, data quality checks and schedule for the ingestion pipeline.
+"""Dagster assets, checks, jobs and sensors: one asset graph from the F1 APIs to the debrief.
 
-Lineage:
+Lineage (every dbt model is its own asset, abridged here):
 
     jolpica_circuits ─┐
-    jolpica_season ───┼──► warehouse ──► dbt_marts ──► race_debrief
-    fastf1_season ────┘       │                            │
-                         quality checks              debrief checks
+    jolpica_season ───┼──► warehouse_tables ──► stg_* ──► int_* ──► fct_* / dim_* / ml_*
+    fastf1_season ────┘          │                                      │
+                           quality checks                ┌──────────────┴──────┐
+                                                   strategy_tables        race_debrief
+                                                                               │
+                                                                        debrief checks
+
+dbt tests show up as asset checks on the model they test (see `dbt_models.py`).
 
 `jolpica_season` and `fastf1_season` are partitioned by season, so one season can be
 backfilled or refreshed on its own.
 
-Monday after a race: `weekly_refresh` pulls the weekend's data at 06:00, and when that
-run succeeds `debrief_after_refresh` rebuilds the warehouse and dbt marts and writes
-the debrief for the latest race.
+After a race weekend: `race_weekend_sensor` watches the season calendar and, once a race
+has had time to settle (Monday 06:00 UTC by default), re-ingests that season. When the
+ingestion run succeeds, `debrief_after_refresh` runs `post_race_debrief`: warehouse, every
+dbt model and test, the strategy tables and the debrief for the latest race.
 """
 
 import asyncio
 import datetime as dt
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +33,9 @@ from dagster import (
     AssetChecksDefinition,
     AssetCheckSeverity,
     AssetExecutionContext,
+    AssetKey,
     AssetSelection,
+    AssetSpec,
     ConfigurableResource,
     DagsterRunStatus,
     Definitions,
@@ -34,36 +43,28 @@ from dagster import (
     MetadataValue,
     RunRequest,
     RunStatusSensorContext,
-    ScheduleEvaluationContext,
+    SensorEvaluationContext,
+    SkipReason,
     StaticPartitionsDefinition,
     asset,
     asset_check,
     define_asset_job,
+    multi_asset,
     run_status_sensor,
-    schedule,
+    sensor,
 )
 
-from f1pred import transform, warehouse
+from f1pred import strategy, warehouse
 from f1pred.config import Settings
 from f1pred.ingest.fastf1_source import FIRST_SEASON, FastF1Loader, ingest_fastf1_season
 from f1pred.ingest.pipeline import ingest_circuits, ingest_season
 from f1pred.jolpica.client import JolpicaClient
+from f1pred.orchestration.dbt_models import dbt_resource, f1pred_dbt_models
+from f1pred.orchestration.resources import DataLake
 
 SEASONS = StaticPartitionsDefinition(
     [str(year) for year in range(FIRST_SEASON, dt.date.today().year + 1)]
 )
-
-
-class DataLake(ConfigurableResource):  # type: ignore[type-arg]
-    """Where raw files, caches and the warehouse live."""
-
-    data_dir: str = "data"
-    # Where debriefs are written. Real ones are committed and published to GitHub Pages.
-    debrief_dir: str = "docs/debriefs"
-
-    @property
-    def settings(self) -> Settings:
-        return Settings(data_dir=Path(self.data_dir))
 
 
 @asset(group_name="ingestion", compute_kind="python")
@@ -100,21 +101,48 @@ def fastf1_season(context: AssetExecutionContext, data_lake: DataLake) -> Materi
     return MaterializeResult(metadata={"rows": rows})
 
 
-@asset(
-    group_name="warehouse",
-    deps=[jolpica_circuits, jolpica_season, fastf1_season],
-    compute_kind="duckdb",
+def _raw_table_spec(table: str) -> AssetSpec:
+    if table == "circuits":
+        upstream, source = [jolpica_circuits], "Jolpica"
+    elif table.startswith("fastf1_"):
+        upstream, source = [fastf1_season], "FastF1"
+    else:
+        upstream, source = [jolpica_season], "Jolpica"
+    return AssetSpec(
+        f"raw_{table}",
+        deps=upstream,
+        description=f"main.raw_{table}: {source} Parquet loaded into DuckDB as is.",
+        group_name="warehouse",
+        kinds={"duckdb"},
+        # FastF1 starts in 2018 and may be missing entirely, so these tables are optional.
+        skippable=True,
+    )
+
+
+RAW_TABLES = (*warehouse.PARTITIONED_TABLES, "circuits")
+
+
+@multi_asset(
+    specs=[_raw_table_spec(table) for table in RAW_TABLES],
+    name="warehouse_tables",
+    can_subset=False,
 )
-def warehouse_tables(data_lake: DataLake) -> MaterializeResult[Any]:
-    """Rebuild the DuckDB warehouse (raw_* tables and dim_driver) from the raw Parquet files."""
+def warehouse_tables(data_lake: DataLake) -> Iterator[MaterializeResult[Any]]:
+    """Rebuild the DuckDB warehouse (raw_* tables and dim_driver) from the raw Parquet files.
+
+    One asset per raw_* table, so each dbt source (and the staging model reading it)
+    hangs off the table it actually reads in the asset graph.
+    """
     settings = data_lake.settings
     counts = warehouse.load(settings.raw_dir, settings.warehouse_path)
-    return MaterializeResult(
-        metadata={
-            "path": MetadataValue.path(str(settings.warehouse_path)),
-            **{f"rows_{table}": count for table, count in counts.items()},
-        }
-    )
+    for table, count in counts.items():
+        yield MaterializeResult(
+            asset_key=f"raw_{table}",
+            metadata={
+                "rows": count,
+                "path": MetadataValue.path(str(settings.warehouse_path)),
+            },
+        )
 
 
 def _make_check(check: warehouse.Check) -> AssetChecksDefinition:
@@ -122,7 +150,11 @@ def _make_check(check: warehouse.Check) -> AssetChecksDefinition:
     while "__" in name:
         name = name.replace("__", "_")
 
-    @asset_check(asset=warehouse_tables, name=name, description=check.name)
+    # Each check sits on the first table it reads. main.dim_driver is built from raw_results
+    # in the same step, so its checks sit on raw_results.
+    table = "raw_results" if check.tables[0] == "dim_driver" else check.tables[0]
+
+    @asset_check(asset=AssetKey(table), name=name, description=check.name)
     def _check(data_lake: DataLake) -> AssetCheckResult:
         path = data_lake.settings.warehouse_path
         with duckdb.connect(str(path), read_only=True) as con:
@@ -143,15 +175,49 @@ def _make_check(check: warehouse.Check) -> AssetChecksDefinition:
 QUALITY_CHECKS = [_make_check(check) for check in warehouse.CHECKS]
 
 
-@asset(group_name="warehouse", deps=[warehouse_tables], compute_kind="dbt")
-def dbt_marts(data_lake: DataLake) -> MaterializeResult[Any]:
-    """Build and test every dbt model (`dbt build`): staging, marts and ML features."""
-    if not transform.run_dbt(data_lake.settings.warehouse_path, ["build"]):
-        raise RuntimeError("dbt build failed: see the run logs.")
-    return MaterializeResult()
+def _mart(name: str) -> AssetKey:
+    """Asset key of the dbt mart marts/<name>. Checked, so a renamed model fails at load."""
+    key = AssetKey(["marts", name])
+    if key not in f1pred_dbt_models.keys:
+        raise KeyError(f"No dbt model named {name}")
+    return key
 
 
-@asset(group_name="debrief", deps=[dbt_marts], compute_kind="python")
+@asset(
+    group_name="strategy",
+    deps=[_mart("fct_laps"), _mart("fct_pit_stops"), _mart("dim_race")],
+    compute_kind="python",
+)
+def strategy_tables(data_lake: DataLake) -> MaterializeResult[Any]:
+    """strategy.* tables: stint pace, undercuts and overcuts, safety car stops, pit windows."""
+    with duckdb.connect(str(data_lake.settings.warehouse_path)) as con:
+        counts = strategy.build_tables(con)
+        findings = strategy.headline_findings(strategy.load_tables(con))
+    return MaterializeResult(
+        metadata={
+            **{f"rows_{table}": count for table, count in counts.items()},
+            "findings": MetadataValue.md("\n".join(f"- {f}" for f in findings)),
+        }
+    )
+
+
+@asset(
+    group_name="debrief",
+    deps=[
+        _mart(name)
+        for name in (
+            "dim_race",
+            "dim_driver",
+            "dim_constructor",
+            "fct_race_results",
+            "fct_laps",
+            "fct_pit_stops",
+            "ml_pre_race_features",
+            "ml_lap_features",
+        )
+    ],
+    compute_kind="python",
+)
 def race_debrief(data_lake: DataLake) -> MaterializeResult[Any]:
     """Post-race debrief for the latest race: predicted vs actual, strategy, tyres, undercuts."""
     from f1pred.debrief import build_debrief, latest_race_id
@@ -230,16 +296,62 @@ rebuild_warehouse = define_asset_job(
 
 post_race_debrief = define_asset_job(
     "post_race_debrief",
-    selection=AssetSelection.assets(warehouse_tables, dbt_marts, race_debrief),
+    selection=(
+        AssetSelection.assets(warehouse_tables, strategy_tables, race_debrief)
+        | AssetSelection.assets(f1pred_dbt_models)
+    ),
 )
 
 
-@schedule(job=refresh_current_season, cron_schedule="0 6 * * 1")
-def weekly_refresh(context: ScheduleEvaluationContext) -> RunRequest:
-    """Every Monday morning, pick up the weekend's race."""
-    season = str(context.scheduled_execution_time.year)
+class RaceCalendar(ConfigurableResource):  # type: ignore[type-arg]
+    """The season's race dates, from Jolpica's schedule (one request per sensor tick)."""
+
+    # Hours after midnight UTC on race day before the data is worth pulling. 30 hours is
+    # Monday 06:00 UTC: Jolpica results and FastF1 timing are both in by then.
+    settle_hours: float = 30.0
+
+    def race_dates(self, season: int) -> dict[int, dt.date]:
+        """race_id (season * 100 + round, as in dbt) -> race date."""
+        settings = Settings()
+
+        async def run() -> dict[int, dt.date]:
+            async with JolpicaClient(settings) as client:
+                schedule = await client.schedule(season)
+            return {race.season * 100 + race.round: race.date for race in schedule}
+
+        return asyncio.run(run())
+
+    def ready_at(self, race_date: dt.date) -> dt.datetime:
+        midnight = dt.datetime.combine(race_date, dt.time(), tzinfo=dt.UTC)
+        return midnight + dt.timedelta(hours=self.settle_hours)
+
+
+@sensor(job=refresh_current_season, minimum_interval_seconds=60 * 60)
+def race_weekend_sensor(
+    context: SensorEvaluationContext, race_calendar: RaceCalendar
+) -> RunRequest | SkipReason:
+    """After each race weekend, re-ingest the season once the results have settled.
+
+    The cursor is the last race_id handled, so each race triggers exactly one run. On the
+    first tick (no cursor) only the most recent race counts: switching the sensor on
+    mid-season does not set off one run per past race.
+    """
+    now = dt.datetime.now(dt.UTC)
+    season = now.year
+    dates = race_calendar.race_dates(season)
+    finished = sorted(rid for rid, day in dates.items() if race_calendar.ready_at(day) <= now)
+    if not finished:
+        return SkipReason(f"No {season} race has finished and settled yet.")
+    latest = finished[-1]
+    if context.cursor is not None and latest <= int(context.cursor):
+        upcoming = [day for rid, day in sorted(dates.items()) if rid > latest]
+        nxt = f"; next race {upcoming[0]:%Y-%m-%d}" if upcoming else ""
+        return SkipReason(f"Race {latest} already handled{nxt}.")
+    context.update_cursor(str(latest))
     return RunRequest(
-        run_key=f"{season}-{context.scheduled_execution_time:%Y%m%d}", partition_key=season
+        run_key=f"race-{latest}",
+        partition_key=str(season),
+        tags={"f1pred/race_id": str(latest)},
     )
 
 
@@ -249,7 +361,7 @@ def weekly_refresh(context: ScheduleEvaluationContext) -> RunRequest:
     request_job=post_race_debrief,
 )
 def debrief_after_refresh(context: RunStatusSensorContext) -> RunRequest:
-    """Once the weekend's data is in, rebuild the marts and write the debrief."""
+    """Once the weekend's data is in, rebuild the warehouse, dbt models, strategy and debrief."""
     return RunRequest(run_key=context.dagster_run.run_id)
 
 
@@ -260,7 +372,8 @@ def _definitions(**resources: Any) -> Definitions:
             jolpica_season,
             fastf1_season,
             warehouse_tables,
-            dbt_marts,
+            f1pred_dbt_models,
+            strategy_tables,
             race_debrief,
         ],
         asset_checks=[
@@ -269,9 +382,13 @@ def _definitions(**resources: Any) -> Definitions:
             debrief_has_strategy_when_tyre_data,
         ],
         jobs=[refresh_current_season, rebuild_warehouse, post_race_debrief],
-        schedules=[weekly_refresh],
-        sensors=[debrief_after_refresh],
-        resources={"data_lake": DataLake(), **resources},
+        sensors=[race_weekend_sensor, debrief_after_refresh],
+        resources={
+            "data_lake": DataLake(),
+            "dbt": dbt_resource(),
+            "race_calendar": RaceCalendar(),
+            **resources,
+        },
     )
 
 

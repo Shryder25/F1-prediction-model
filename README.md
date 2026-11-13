@@ -34,7 +34,9 @@ FastF1 ──► per-lap tyres, stints, track status, weather  │
                                                          ▼
           data/warehouse.duckdb: raw_* tables + dim_driver ──► 10 data quality checks
 
-Orchestrated by Dagster: season-partitioned assets, asset checks, weekly refresh schedule.
+Orchestrated by Dagster as one asset graph with dbt (dagster-dbt): season-partitioned
+ingestion, one asset per raw table and dbt model, dbt tests as asset checks, and a sensor
+that runs the pipeline after each race weekend.
 ```
 
 ## Architecture (stage 2)
@@ -202,7 +204,7 @@ uv run f1pred debrief-site               # HTML site in site/, as published to G
 
 The Monday-morning report: the pre-race prediction against the result, the win
 probability lap by lap, each driver's strategy and pit timing, tyre degradation, undercut
-and overcut outcomes, and safety car stops. Dagster writes it after the weekly refresh;
+and overcut outcomes, and safety car stops. Dagster writes it after each race weekend;
 pushing it publishes it to GitHub Pages. Method and setup: [`docs/debrief`](docs/debrief).
 
 ### Running with Dagster
@@ -211,10 +213,32 @@ pushing it publishes it to GitHub Pages. Method and setup: [`docs/debrief`](docs
 uv run dagster dev       # opens the UI at http://localhost:3000
 ```
 
-In the UI you can see the asset lineage graph, backfill any season partition, and view
-data quality check results. The `weekly_refresh` schedule re-ingests the current season
-every Monday at 06:00 UTC; when it succeeds, the `debrief_after_refresh` sensor rebuilds the
-dbt marts and writes the debrief for the latest race.
+Ingestion, the warehouse, every dbt model, the strategy tables and the debrief are one
+asset graph, so lineage runs from the API call to the model features and the report:
+
+```
+jolpica_season ──► raw_laps ──► staging/stg_jolpica__laps ──► intermediate/int_laps_with_tyres
+                                                                   │
+                         race_debrief ◄── marts/fct_laps ◄─────────┘
+                       strategy_tables ◄──┘
+```
+
+- **dbt models are assets.** `dagster-dbt` reads dbt's manifest
+  (`src/f1pred/orchestration/dbt_models.py`). Each model is an asset keyed by its schema
+  (`staging/…`, `intermediate/…`, `marts/…`), grouped by folder, and each dbt source maps
+  to the `raw_*` table asset that loads it. Materializing a model runs `dbt build` for
+  just that selection.
+- **dbt tests are asset checks**, shown on the model they test, next to the 10 raw-table
+  quality checks.
+- **`race_weekend_sensor`** reads the season calendar from Jolpica once an hour. When a
+  race has settled (Monday 06:00 UTC by default, `settle_hours` on the `race_calendar`
+  resource) it re-ingests that season, once per race (the cursor is the last race handled).
+  On success, `debrief_after_refresh` runs `post_race_debrief`: warehouse tables, every
+  dbt model and test, the strategy tables and the debrief.
+
+The manifest is parsed on load when it is missing or older than the dbt project, so a
+fresh checkout just works. Switch the sensors on in the UI (Automation tab); they are off
+by default.
 
 Jolpica allows about 500 requests per hour, and one season takes roughly that many
 (lap times are paginated). Every response is cached, so an interrupted run resumes where it

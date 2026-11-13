@@ -43,6 +43,7 @@ serve = [
 transform = [
     "dbt-core>=1.9",
     "dbt-duckdb>=1.9",
+    "dagster-dbt>=0.29.27",
 ]
 
 [build-system]
