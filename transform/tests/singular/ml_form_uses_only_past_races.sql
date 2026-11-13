@@ -1,3 +1,6 @@
+-- Dagster shows this as an asset check on ml_pre_race_features.
+{{ config(meta={'dagster': {'ref': {'name': 'ml_pre_race_features'}}}) }}
+
 -- Leakage guard: recompute driver form a second, independent way (a self-join on
 -- strictly earlier races) and fail on any row where the mart disagrees.
 -- If the window frame ever included the current race, this would catch it.

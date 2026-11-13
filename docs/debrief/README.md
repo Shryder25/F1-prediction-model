@@ -23,11 +23,12 @@ Example layout (demo data): see the site published from this repository's Pages.
 ## How it is built
 
 ```
-weekly_refresh (Mon 06:00)            Dagster schedule: pull the weekend's season partition
+race_weekend_sensor                   once the race has settled (Mon 06:00 UTC): pull its season
         │ on success
         ▼
 debrief_after_refresh (sensor) ──► post_race_debrief job:
-        warehouse_tables ──► dbt_marts (dbt build, all tests) ──► race_debrief
+        raw_* tables ──► every dbt model + test (dagster-dbt) ──► strategy_tables
+                                                             └──► race_debrief
                                                                     │  + 2 asset checks
                                                                     ▼
                                          docs/debriefs/<season>-<round>.json / .md
@@ -82,8 +83,8 @@ uv run f1pred debrief 202605 202606   # or chosen races; --season 2026 for all o
 git add docs/debriefs && git commit -m "Debrief: <race>" && git push
 ```
 
-Or let Dagster do it every Monday: `uv run dagster dev`, then switch on the
-`weekly_refresh` schedule and the `debrief_after_refresh` sensor. The run writes the
+Or let Dagster do it after every race: `uv run dagster dev`, then switch on the
+`race_weekend_sensor` and `debrief_after_refresh` sensors. The run writes the
 debrief to `docs/debriefs/`; commit and push it to publish.
 
 ## Publish on GitHub Pages (one time)
