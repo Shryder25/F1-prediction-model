@@ -1,0 +1,65 @@
+name: Publish race debriefs
+
+# Builds the post-race debrief site from docs/debriefs/*.json and publishes it to
+# GitHub Pages. Runs when a new debrief is pushed to main.
+#
+# One-time setup (see docs/debrief/README.md): Settings > Pages > Source: GitHub Actions.
+# Until real debriefs are committed, the site shows debriefs of the synthetic demo
+# season, clearly labelled as demo data.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/debriefs/**"
+      - "src/f1pred/debrief/**"
+      - ".github/workflows/debrief-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: debrief-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.12
+      - name: Install
+        run: uv sync --all-groups
+      - name: Demo debriefs, if no real ones are committed yet
+        run: |
+          if ls docs/debriefs/*.json >/dev/null 2>&1; then
+            echo "Publishing the committed debriefs."
+            echo "SRC=docs/debriefs" >> "$GITHUB_ENV"
+          else
+            echo "No debriefs committed yet: publishing the demo season."
+            uv run f1pred demo --seasons 2020-2026
+            uv run f1pred --demo transform
+            uv run f1pred --demo evaluate --quick
+            uv run f1pred --demo debrief --season 2026
+            echo "SRC=data/demo/debriefs" >> "$GITHUB_ENV"
+          fi
+      - name: Build the site
+        run: uv run f1pred debrief-site --src "$SRC" --out site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -18,6 +18,7 @@ predictions to a browser HUD during a replay or a live race.
 | 2 | Warehouse modelling (dbt), three insight analyses and a Streamlit dashboard | Done |
 | 3 | Pre-race and lap-by-lap prediction models, evaluated against baselines on unseen seasons | Done |
 | 4 | Streaming replay/live pipeline, FastAPI SSE service, HUD and Docker | Done |
+| Debrief | Automated post-race report (predicted vs actual, strategy, tyres, undercuts) on GitHub Pages | Done |
 | Next | Results from the real 2018-2026 run, public demo ([deploy guide](docs/deploy.md)), demo video ([script](docs/demo-video.md)) | In progress |
 
 ## Architecture (stage 1)
@@ -179,6 +180,18 @@ docker compose up                        # http://localhost:8000
 
 Hosting it publicly on Hugging Face Spaces or Render: [`docs/deploy.md`](docs/deploy.md).
 
+### Post-race debrief
+
+```bash
+uv run f1pred debrief                    # latest race -> docs/debriefs/<season>-<round>.md
+uv run f1pred debrief-site               # HTML site in site/, as published to GitHub Pages
+```
+
+The Monday-morning report: the pre-race prediction against the result, the win
+probability lap by lap, each driver's strategy and pit timing, tyre degradation, undercut
+and overcut outcomes, and safety car stops. Dagster writes it after the weekly refresh;
+pushing it publishes it to GitHub Pages. Method and setup: [`docs/debrief`](docs/debrief).
+
 ### Running with Dagster
 
 ```bash
@@ -187,7 +200,8 @@ uv run dagster dev       # opens the UI at http://localhost:3000
 
 In the UI you can see the asset lineage graph, backfill any season partition, and view
 data quality check results. The `weekly_refresh` schedule re-ingests the current season
-every Monday at 06:00 UTC.
+every Monday at 06:00 UTC; when it succeeds, the `debrief_after_refresh` sensor rebuilds the
+dbt marts and writes the debrief for the latest race.
 
 Jolpica allows about 500 requests per hour, and one season takes roughly that many
 (lap times are paginated). Every response is cached, so an interrupted run resumes where it
