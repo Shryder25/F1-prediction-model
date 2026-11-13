@@ -29,6 +29,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from f1pred.strategy.battles import neutralised_laps
 from f1pred.strategy.config import DEFAULT_CONFIG, StrategyConfig
 
 WINDOW_COLUMNS = [
@@ -40,7 +41,9 @@ WINDOW_COLUMNS = [
     "optimal_pit_lap",
     "window_open",
     "window_close",
-    "verdict",  # 'early', 'in window' or 'late'
+    # 'early', 'in window' or 'late'; 'safety car' when the stop was made under a
+    # SC, VSC or red flag, which the tyre model cannot judge.
+    "verdict",
     "time_lost_s",  # modelled seconds lost by stopping on the actual lap, not the optimal
 ]
 
@@ -98,6 +101,7 @@ def pit_windows(
         .min()
     )
     race_laps = laps.groupby("race_id")["total_laps"].max()
+    neutral: dict[Any, set[int]] = {r: neutralised_laps(g) for r, g in laps.groupby("race_id")}
     rows: list[dict[str, Any]] = []
     ordered = stints.sort_values(["race_id", "driver_id", "stint"])
     for (race_id, driver_id), driver_stints in ordered.groupby(["race_id", "driver_id"]):
@@ -112,6 +116,8 @@ def pit_windows(
                 race_id, str(driver_id), cur, nxt, own, race_deg, first_age, stints, config
             )
             if row is not None:
+                if row["actual_pit_lap"] in neutral.get(race_id, set()):
+                    row["verdict"] = "safety car"
                 rows.append(row)
     if not rows:
         return pd.DataFrame(columns=WINDOW_COLUMNS)

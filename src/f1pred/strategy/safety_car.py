@@ -27,8 +27,9 @@ SC_STOP_COLUMNS = [
     "pit_loss_s",
     "green_pit_loss_s",  # median pit loss of the race's green-flag stops
     "time_saved_s",  # green_pit_loss_s - pit_loss_s
-    # Position at the end of the lap before the stop minus position at the end of
-    # the out-lap. Negative means places were lost in the stop.
+    # Places this stop kept compared with the same stop under green: at the end of the
+    # out-lap, how many cars would have been ahead had it cost green_pit_loss_s,
+    # minus how many actually were. Other cars are held as they raced.
     "positions_gained",
 ]
 
@@ -120,15 +121,23 @@ def safety_car_stops(
     neutral["green_pit_loss_s"] = neutral["race_id"].map(green_pit_loss(losses)).astype(float)
     neutral["time_saved_s"] = (neutral["green_pit_loss_s"] - neutral["pit_loss_s"]).round(3)
 
-    position = laps.set_index(["race_id", "driver_id", "lap"])["position"]
-    position = position[~position.index.duplicated()]
+    elapsed = laps.pivot_table(
+        index=["race_id", "lap"], columns="driver_id", values="elapsed_s", aggfunc="first"
+    )
 
     def gained(row: pd.Series) -> float:
-        before = (row["race_id"], row["driver_id"], row["lap"] - 1)
-        after = (row["race_id"], row["driver_id"], row["lap"] + 1)
-        if before not in position.index or after not in position.index:
+        """Places kept by not paying the green-flag pit loss."""
+        key = (row["race_id"], row["lap"] + 1)
+        if pd.isna(row["time_saved_s"]) or key not in elapsed.index:
             return float("nan")
-        return float(position[before] - position[after])
+        field = pd.Series(elapsed.loc[key]).dropna()
+        if row["driver_id"] not in field.index:
+            return float("nan")
+        own = float(field[row["driver_id"]])
+        others = field.drop(row["driver_id"])
+        actual = int((others < own).sum())
+        if_green = int((others < own + float(row["time_saved_s"])).sum())
+        return float(if_green - actual)
 
     neutral["positions_gained"] = neutral.apply(gained, axis=1).astype("Int64")
     return neutral[SC_STOP_COLUMNS].reset_index(drop=True)

@@ -97,13 +97,14 @@ def safety_car_gains(stops: pd.DataFrame, by: Sequence[str] = ("track_status",))
 
 
 def window_adherence(windows: pd.DataFrame, by: Sequence[str] = ("compound",)) -> pd.DataFrame:
-    """Share of stops early, in the modelled window, or late, and median time lost."""
+    """Share of stops early, in the modelled window, late or under a safety car."""
     keys = list(by)
-    columns = [*keys, "stops", "early", "in_window", "late", "median_time_lost_s"]
+    columns = [*keys, "stops", "early", "in_window", "late", "safety_car", "median_time_lost_s"]
     if windows.empty:
         return pd.DataFrame(columns=columns)
     out = windows.groupby(keys, as_index=False).agg(
         stops=("verdict", "size"),
+        safety_car=("verdict", lambda s: (s == "safety car").mean()),
         early=("verdict", lambda s: (s == "early").mean()),
         in_window=("verdict", lambda s: (s == "in window").mean()),
         late=("verdict", lambda s: (s == "late").mean()),
@@ -125,9 +126,12 @@ def headline_findings(rs: RaceStrategy) -> list[str]:
     for row in sc.itertuples():
         lines.append(
             f"A stop under {row.track_status} saved a median {row.median_time_saved_s:.1f} s "
-            f"against a green-flag stop ({row.stops} stops)."
+            f"and {row.median_positions:.0f} places against a green-flag stop "
+            f"({row.stops} stops)."
         )
     windows = rs.pit_windows
+    if not windows.empty:
+        windows = windows.loc[windows["verdict"] != "safety car"]
     if not windows.empty:
         in_window = (windows["verdict"] == "in window").mean()
         early = (windows["verdict"] == "early").mean()
