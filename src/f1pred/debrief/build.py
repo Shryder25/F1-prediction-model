@@ -328,10 +328,14 @@ def strategy_section(
         for w in pit_windows.sort_values(["driver_id", "stint"]).to_dict(orient="records"):
             if _int(w["actual_pit_lap"]) is None:
                 continue
-            verdicts.setdefault(w["driver_id"], []).append(
-                f"lap {int(w['actual_pit_lap'])}: {w['verdict']} "
+            lap = int(w["actual_pit_lap"])
+            text = (
+                f"lap {lap}: under safety car"
+                if w["verdict"] == "safety car"
+                else f"lap {lap}: {w['verdict']} "
                 f"(window {int(w['window_open'])}-{int(w['window_close'])})"
             )
+            verdicts.setdefault(w["driver_id"], []).append(text)
 
     drivers = []
     for driver_id, group in stints.sort_values("stint").groupby("driver_id", sort=False):

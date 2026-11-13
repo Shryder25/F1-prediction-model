@@ -192,7 +192,19 @@ PIT_WINDOWS = pd.DataFrame(
             "window_close": 24,
             "verdict": "early",
             "time_lost_s": 0.9,
-        }
+        },
+        {
+            "race_id": 1,
+            "driver_id": "lec",
+            "stint": 1,
+            "compound": "SOFT",
+            "actual_pit_lap": 12,
+            "optimal_pit_lap": 16,
+            "window_open": 14,
+            "window_close": 18,
+            "verdict": "safety car",
+            "time_lost_s": 0.0,
+        },
     ]
 )
 
@@ -204,6 +216,7 @@ def test_strategy_section() -> None:
     nor = st.drivers[1]
     assert nor.stops == 1 and [s.compound for s in nor.stints] == ["MEDIUM", "HARD"]
     assert nor.pit_verdicts == ["lap 18: early (window 20-24)"]
+    assert st.drivers[2].pit_verdicts == ["lap 12: under safety car"]
     # Unusable stints are left out; the highest degradation comes first.
     assert [c.compound for c in st.degradation] == ["SOFT", "MEDIUM", "HARD"]
     assert st.degradation[1].median_degradation_s_per_lap == pytest.approx(0.06)
