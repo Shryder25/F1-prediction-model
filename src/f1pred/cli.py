@@ -2,6 +2,7 @@
 
 Stage 1: `ingest`, `ingest-fastf1`, `load`, `check`.
 Stage 2: `transform` (dbt build), `docs`, `findings`, `dashboard`, and `demo`.
+Strategy: `strategy` (stint pace, undercuts, safety car stops, pit windows).
 Stage 3: `evaluate` (train, score against baselines, write the report).
 Stage 4: `replay` (a past race in the terminal) and `serve` (the SSE service and HUD).
 Debrief: `debrief` (post-race report) and `debrief-site` (the GitHub Pages site).
@@ -19,7 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from f1pred import demo, insights, transform, warehouse
+from f1pred import demo, insights, strategy, transform, warehouse
 from f1pred.config import Settings
 from f1pred.ingest.fastf1_source import FastF1Loader, ingest_fastf1_season
 from f1pred.ingest.pipeline import ingest_circuits, ingest_season
@@ -68,6 +69,13 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("docs", help="Generate dbt docs (open with `dbt docs serve`)")
     sub.add_parser("findings", help="Print the headline finding of each analysis")
     sub.add_parser("dashboard", help="Open the Streamlit insights dashboard")
+    strategy_cmd = sub.add_parser(
+        "strategy",
+        help="Build the strategy tables (stint pace, undercuts, SC stops, pit windows)",
+    )
+    strategy_cmd.add_argument(
+        "--race", type=int, help="Print one race's strategy tables instead, e.g. 202405"
+    )
     evaluate = sub.add_parser(
         "evaluate", help="Train the models, score them on unseen seasons, write the report"
     )
@@ -174,6 +182,8 @@ def main(argv: list[str] | None = None) -> int:
         app = Path(__file__).parent / "dashboard" / "app.py"
         command = [sys.executable, "-m", "streamlit", "run", str(app)]
         return subprocess.call([*command, "--", "--warehouse", str(settings.warehouse_path)])
+    elif args.command == "strategy":
+        return _strategy(settings, args)
     elif args.command == "evaluate":
         return _evaluate(settings, args)
     elif args.command == "replay":
@@ -227,7 +237,15 @@ def _debrief(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
-PIPELINE_STEPS = ("ingest", "ingest-fastf1", "load", "check", "transform", "evaluate")
+PIPELINE_STEPS = (
+    "ingest",
+    "ingest-fastf1",
+    "load",
+    "check",
+    "transform",
+    "strategy",
+    "evaluate",
+)
 
 
 def _pipeline(settings: Settings, args: argparse.Namespace) -> int:
@@ -239,6 +257,7 @@ def _pipeline(settings: Settings, args: argparse.Namespace) -> int:
         "load": ["load"],
         "check": ["check"],
         "transform": ["transform"],
+        "strategy": ["strategy"],
         "evaluate": ["evaluate", *(["--quick"] if args.quick else [])],
     }
     prefix = ["--demo"] if args.demo else []
@@ -259,6 +278,11 @@ def write_results(settings: Settings) -> Path:
         demo_note = "Synthetic demo data, not real races.\n\n" if insights.is_demo(con) else ""
         loaded = insights.seasons(con)
         findings = insights.headline_findings(con, loaded)
+        strategy_findings = (
+            strategy.headline_findings(strategy.load_tables(con))
+            if strategy.has_tables(con)
+            else ["_No strategy tables yet: run f1pred strategy._"]
+        )
     report = settings.data_dir / "reports" / "model" / "report.md"
     lines = [
         "# f1pred results",
@@ -269,6 +293,10 @@ def write_results(settings: Settings) -> Path:
         "",
         *(f"- {finding}" for finding in findings),
         "",
+        "## Strategy findings",
+        "",
+        *(f"- {finding}" for finding in strategy_findings),
+        "",
         "## Model report",
         "",
         report.read_text() if report.exists() else "_No model report yet: run f1pred evaluate._",
@@ -277,6 +305,29 @@ def write_results(settings: Settings) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n")
     return path
+
+
+def _strategy(settings: Settings, args: argparse.Namespace) -> int:
+    if args.race is not None:
+        import pandas as pd
+
+        with insights.connect(settings.warehouse_path) as con:
+            result = strategy.race_strategy(con, args.race)
+        with pd.option_context("display.width", 160, "display.max_columns", 20):
+            for name, frame in result.frames().items():
+                print(f"\n== {name} ({len(frame)} rows) ==")
+                print(frame.to_string(index=False) if not frame.empty else "(none)")
+        return 0
+    import duckdb
+
+    with duckdb.connect(str(settings.warehouse_path)) as con:
+        for table, count in strategy.build_tables(con).items():
+            print(f"strategy.{table:20} {count:>8,} rows")
+        if insights.is_demo(con):
+            print("(demo data: synthetic, not real races)")
+        for finding in strategy.headline_findings(strategy.load_tables(con)):
+            print(f"- {finding}")
+    return 0
 
 
 def _evaluate(settings: Settings, args: argparse.Namespace) -> int:
